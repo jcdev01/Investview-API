@@ -59,6 +59,7 @@ OpenAPI (SpringDoc) e Lombok.
 - Repositório Git inicializado: commit inicial na branch `main`, remote
   `origin` -> https://github.com/jcdev01/Investview-API.git. Push pendente de
   autenticação do GitHub no WSL (rodar no PowerShell/IntelliJ).
+- Criado `README.md` com stack, infra Docker, execução, Swagger e testes.
 
 ## Próximos passos
 
