@@ -56,10 +56,14 @@ OpenAPI (SpringDoc) e Lombok.
   conectado). Não havia senha gerada pelo Spring Security no log; criada
   `SecurityConfig` com usuário de dev `admin`/`admin` e Swagger público.
 - Login e acesso ao Swagger validados pelo usuário.
+- Repositório Git inicializado: commit inicial na branch `main`, remote
+  `origin` -> https://github.com/jcdev01/Investview-API.git. Push pendente de
+  autenticação do GitHub no WSL (rodar no PowerShell/IntelliJ).
 
 ## Próximos passos
 
 - Subir a infra: `docker compose up -d` (Docker Desktop com integração WSL).
+- Concluir o `git push -u origin main` (autenticar no GitHub).
 - Definir a modelagem de domínio inicial.
 - Criar os primeiros endpoints REST.
 - Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
