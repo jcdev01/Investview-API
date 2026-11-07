@@ -20,11 +20,13 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
-                                "/v3/api-docs/**")
+                                "/v3/api-docs/**",
+                                "/h2-console/**")
                         .permitAll()
                         .anyRequest().authenticated())
                 .formLogin(Customizer.withDefaults())
@@ -34,8 +36,8 @@ public class SecurityConfig {
 
     @Bean
     UserDetailsService userDetailsService(
-            @Value("${app.security.username:admin}") String username,
-            @Value("${app.security.password:admin}") String password,
+            @Value("${app.security.username}") String username,
+            @Value("${app.security.password}") String password,
             PasswordEncoder passwordEncoder) {
         UserDetails user = User.withUsername(username)
                 .password(passwordEncoder.encode(password))
