@@ -81,21 +81,27 @@ src/main/java/jairo/investviewapi/
 ├── InvestviewApiApplication.java   -> classe principal
 ├── config/SecurityConfig.java      -> segurança de dev + Swagger público
 ├── controller/
-│   └── UserController.java         -> CRUD REST de usuário (/users)
+│   ├── UserController.java         -> CRUD REST de usuário (/users)
+│   └── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
 ├── dto/
 │   ├── UserCreateRequest.java      -> record de entrada (create) + validação
 │   ├── UserUpdateRequest.java      -> record de entrada (update) + validação
-│   └── UserResponse.java           -> record de saída (sem senha)
+│   ├── UserResponse.java           -> record de saída (sem senha)
+│   ├── FavoriteRequest.java        -> record de entrada (symbol, type, name) + validação
+│   └── FavoriteResponse.java       -> record de saída (id, symbol, type, name)
 ├── entity/
 │   ├── User.java                   -> entidade JPA de usuário (1:N favorites)
-│   └── Favorite.java               -> entidade JPA de favorito (N:1 user)
+│   ├── AssetType.java              -> enum (STOCK, FII, ETF, CRYPTO)
+│   └── Favorite.java               -> favorito do usuário (user, symbol, type, name)
 ├── exception/
-│   └── ResourceNotFoundException.java -> exceção de recurso não encontrado
+│   ├── ResourceNotFoundException.java -> recurso não encontrado (404)
+│   └── ConflictException.java      -> conflito de duplicidade (409)
 ├── repository/
 │   ├── UserRepository.java         -> JpaRepository<User, Long>
 │   └── FavoriteRepository.java     -> JpaRepository<Favorite, Long>
 └── service/
-    └── UserService.java            -> CRUD de usuário + hash de senha
+    ├── UserService.java            -> CRUD de usuário + hash de senha
+    └── FavoriteService.java        -> adicionar/listar/remover favoritos
 src/main/resources/application.properties
 src/test/java/jairo/investviewapi/InvestviewApiApplicationTests.java
 docker-compose.yml                  -> PostgreSQL + Redis
@@ -129,12 +135,13 @@ Pronto:
 - [x] DTOs `record` de usuário (create/update/response) com Bean Validation
 - [x] `UserController` com CRUD REST em `/users`
 - [x] H2 em memória para dev + console em `/h2-console`
+- [x] Favoritos simplificados: `Favorite` armazena diretamente `symbol`, `type` (`STOCK, FII, ETF, CRYPTO`) e `name` (opcional), com constraint unique `(user_id, type, symbol)`. Remoção da entidade `Asset` e de `AssetRepository`.
+- [x] `FavoriteController`/`FavoriteService`: adicionar (normalização de symbol + prevenção de duplicidade 409), listar por usuário e remover (404); Swagger documentado com `@Tag` e `@Operation`.
 
 Pendente:
 
 - [ ] Tratamento global de exceções (handler para email duplicado etc.)
-- [ ] Entidade `Favorite` evoluir com campos de negócio
-- [ ] Primeiros endpoints REST
+- [ ] Entidade `Favorite` evoluir com campos de negócio (se necessário)
 - [ ] Migrations (Flyway/Liquibase) e remoção de `ddl-auto=update`
 - [ ] Evoluir autenticação para OAuth2/banco (remover usuário em memória)
 - [ ] Testes de integração dos endpoints
@@ -148,8 +155,8 @@ Pendente:
   - `88eb5a3` chore: configura projeto Spring Boot com Docker, Swagger e contexto de IA
   - `bf8ae87` docs: registra commit inicial e remote no contexto de IA
   - `f804dfa` docs: adiciona README do projeto
-- **Pendente de commit:** `docs/ONBOARDING.md` (novo) e atualizações deste
-  `docs/AI_CONTEXT.md`.
+  - `fc6e782` feat:Implementação do crud da entity User
+  - `bc06fa8` feat: implementa gerenciamento de favoritos simplificado e documentação Swagger
 
 ## Decisões
 
@@ -205,7 +212,18 @@ Pendente:
 - **`User` 1:N `Favorite`:** `User.favorites` com `@OneToMany(mappedBy = "user",
   cascade = ALL, orphanRemoval = true)` e `List<Favorite>` inicializada. Do outro
   lado, `Favorite.user` com `@ManyToOne(fetch = LAZY, optional = false)` e
-  `@JoinColumn(name = "user_id")`. Por enquanto `Favorite` só tem `id` + vínculo.
+  `@JoinColumn(name = "user_id")`.
+- **Favoritos simplificados (sem Asset nem chamadas externas):** O backend NÃO
+  chama APIs externas e NÃO armazena cotações. Guarda apenas a identidade do ativo
+  favorito (`symbol` normalizado com `trim().toUpperCase()`, `type` do enum
+  `STOCK, FII, ETF, CRYPTO` e `name` opcional para exibição). O frontend consulta as
+  cotações diretamente na brapi usando o `symbol`. A API CoinGecko foi descartada,
+  pois criptomoedas também são consultadas na brapi (`/api/v2/crypto?coin=BTC`).
+  A entidade `Asset` e o `AssetRepository` foram removidos. A tabela `tb_favorites`
+  guarda diretamente os dados do ativo com unique `(user_id, type, symbol)`.
+  Duplicidade lança `ConflictException` (409) e exclusão/consulta inexistente lança
+  `ResourceNotFoundException` (404). Endpoints em `/users/{userId}/favorites`
+  estão documentados com anotações OpenAPI/Swagger.
 - **Chaves primárias `Long`:** a partir de 2026-11-07 as PKs usam `Long` com
   `GenerationType.IDENTITY` (em vez de `UUID`), por simplicidade e performance em
   banco único.
@@ -275,6 +293,15 @@ Pendente:
   `application-prod.properties` e `SecurityConfig`; segredos agora só no `.env`.
 - Fix do H2 Console: adicionado `spring-boot-h2console` (módulo separado no Boot
   4). Acessar com barra final: `/h2-console/`.
+- Definido o modelo de favoritos: `Asset` (ação/cripto/fundo) + `Favorite` como
+  vínculo User N:1 Asset, único por usuário. Implementados entity, repositórios,
+  DTOs (`record`), `FavoriteService` e `FavoriteController`
+  (`/users/{userId}/favorites`).
+- Simplificado: sem brapi/CoinGecko no backend. `Asset` e `AssetRepository` removidos.
+- Modelo de favoritos simplificado: `Favorite` armazena diretamente `symbol`, `type` (`STOCK, FII, ETF, CRYPTO`) e `name` (opcional), com constraint unique `(user_id, type, symbol)`.
+- `FavoriteRequest` e `FavoriteResponse` ajustados (com validação Bean Validation).
+- `FavoriteService` atualizado para normalizar `symbol` (`trim().toUpperCase()`) e lançar 409 em duplicidade.
+- `FavoriteController` documentado com Swagger / OpenAPI annotations.
 
 ### 2026-11-05
 - Criado o contexto de IA do projeto (`AGENTS.md` + `docs/AI_CONTEXT.md`) com
