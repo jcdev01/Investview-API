@@ -182,6 +182,7 @@ Pendente:
   - `f804dfa` docs: adiciona README do projeto
   - `fc6e782` feat:Implementação do crud da entity User
   - `3ee221e` feat: implementa gerenciamento de favoritos simplificado e documentação Swagger
+  - `c99c050` feat: implementa autenticacao Google, controle RBAC e tratamento global de excecoes
 
 ## Decisões
 
@@ -490,7 +491,8 @@ Pendente:
 3. ~~Escrever testes de integração com JWT mockado.~~
    **Concluído em 2026-11-08:** 9 testes automatizados cobrindo provisionamento, token
    inválido, controle de dono e isolamento administrativo.
-4. Commitar as alterações acumuladas (autenticação Google, IDOR, RBAC, testes e `.env.example`).
+4. ~~Commitar as alterações acumuladas.~~
+   **Concluído em 2026-11-08:** commit `c99c050`.
 5. Documentar `UserController` e `AuthController` no Swagger com anotações OpenAPI (`@Tag`, `@Operation`, `@ApiResponse`).
 6. Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
 7. Implementar cache Redis de favoritos/usuário (quando fizer sentido).
