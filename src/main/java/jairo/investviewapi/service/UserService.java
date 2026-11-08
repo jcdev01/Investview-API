@@ -4,6 +4,7 @@ import jairo.investviewapi.dto.UserCreateRequest;
 import jairo.investviewapi.dto.UserResponse;
 import jairo.investviewapi.dto.UserUpdateRequest;
 import jairo.investviewapi.entity.User;
+import jairo.investviewapi.exception.ConflictException;
 import jairo.investviewapi.exception.ResourceNotFoundException;
 import jairo.investviewapi.repository.UserRepository;
 import java.util.List;
@@ -22,7 +23,7 @@ public class UserService {
     @Transactional
     public UserResponse create(UserCreateRequest request) {
         if (userRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("Email já cadastrado");
+            throw new ConflictException("Email já cadastrado");
         }
         User user = request.toEntity();
         user.setPassword(passwordEncoder.encode(request.password()));
@@ -44,6 +45,9 @@ public class UserService {
     @Transactional
     public UserResponse update(Long id, UserUpdateRequest request) {
         User user = getUser(id);
+        if (!user.getEmail().equals(request.email()) && userRepository.existsByEmail(request.email())) {
+            throw new ConflictException("Email já cadastrado");
+        }
         user.setName(request.name());
         user.setEmail(request.email());
         if (request.password() != null && !request.password().isBlank()) {

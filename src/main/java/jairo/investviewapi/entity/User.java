@@ -3,6 +3,8 @@ package jairo.investviewapi.entity;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -35,8 +37,16 @@ public class User {
     @Column(nullable = false, unique = true, length = 160)
     private String email;
 
-    @Column(nullable = false)
+    @Column
     private String password;
+
+    @Column(name = "google_sub", unique = true, length = 255)
+    private String googleSub;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private Role role = Role.USER;
 
     @Builder.Default
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)

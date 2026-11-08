@@ -3,15 +3,16 @@
 > Memória persistente das nossas conversas. Mantido automaticamente pelo agente
 > conforme as regras do `AGENTS.md`. Não apague o histórico; apenas acrescente.
 >
-> **Status: projeto pausado em 2026-11-05.** Ao retomar, ler este arquivo
-> inteiro antes de agir.
+> **Status: em desenvolvimento ativo (retomado em 2026-11-08).**
+> Autenticação Google OAuth2 Resource Server, tratamento de exceções, proteção
+> contra IDOR e controle de acesso RBAC (`ROLE_ADMIN` vs `ROLE_USER`) implementados.
 
 ## Resumo do projeto
 
 API REST para gestão de investimentos, construída com Java 25 + Spring Boot
-4.1.2 (Maven). Está no estágio inicial: a **base de infraestrutura, segurança de
-desenvolvimento e documentação** está pronta, mas ainda **não existem entidades
-de domínio nem endpoints de negócio**. O próximo marco é a modelagem de domínio.
+4.1.2 (Maven). Possui infraestrutura de persistência, autenticação Google
+(OAuth2 Resource Server via JWT), entidades de domínio (`User` e `Favorite`),
+controle de acesso por dono e RBAC (`ROLE_ADMIN` vs `ROLE_USER`).
 
 - **Repositório:** https://github.com/jcdev01/Investview-API.git
 - **Branch principal:** `main`
@@ -69,7 +70,10 @@ Variáveis esperadas (obrigatórias; sem defaults embutidos):
 | `REDIS_PORT`            | porta do Redis                                   |
 | `APP_SECURITY_USERNAME` | usuário do login de dev                          |
 | `APP_SECURITY_PASSWORD` | senha do login de dev                            |
+| `APP_SECURITY_ADMIN_EMAILS` | emails de admins separados por vírgula        |
 | `SPRING_PROFILES_ACTIVE`| profile ativo (`test` por padrão)                |
+| `GOOGLE_CLIENT_ID`      | client ID do OAuth2/Google (audience do token)   |
+| `APP_CORS_ALLOWED_ORIGINS` | origens permitidas no CORS (separadas por vírgula) |
 
 O Docker Compose carrega `.env` automaticamente. O Spring Boot lê o `.env` via
 `spring.config.import=optional:file:.env[.properties]` em `application.properties`.
@@ -79,8 +83,14 @@ O Docker Compose carrega `.env` automaticamente. O Spring Boot lê o `.env` via
 ```
 src/main/java/jairo/investviewapi/
 ├── InvestviewApiApplication.java   -> classe principal
-├── config/SecurityConfig.java      -> segurança de dev + Swagger público
+├── config/
+│   ├── SecurityConfig.java         -> beans comuns (PasswordEncoder, JwtDecoder, CORS)
+│   ├── DevSecurityConfig.java      -> chain dev/test (form login + Basic + JWT)
+│   └── ProdSecurityConfig.java     -> chain prod (somente JWT resource server)
+├── security/GoogleUserSyncFilter.java -> provisiona User (JIT) a partir do JWT do Google
+├── security/CurrentUserProvider.java -> resolve o User do JWT e exige que seja o dono do recurso
 ├── controller/
+│   ├── AuthController.java         -> /auth/me (usuário autenticado via Google)
 │   ├── UserController.java         -> CRUD REST de usuário (/users)
 │   └── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
 ├── dto/
@@ -90,25 +100,35 @@ src/main/java/jairo/investviewapi/
 │   ├── FavoriteRequest.java        -> record de entrada (symbol, type, name) + validação
 │   └── FavoriteResponse.java       -> record de saída (id, symbol, type, name)
 ├── entity/
-│   ├── User.java                   -> entidade JPA de usuário (1:N favorites)
+│   ├── User.java                   -> entidade JPA de usuário (1:N favorites, role USER/ADMIN)
+│   ├── Role.java                   -> enum de perfis de acesso (USER, ADMIN)
 │   ├── AssetType.java              -> enum (STOCK, FII, ETF, CRYPTO)
 │   └── Favorite.java               -> favorito do usuário (user, symbol, type, name)
 ├── exception/
 │   ├── ResourceNotFoundException.java -> recurso não encontrado (404)
-│   └── ConflictException.java      -> conflito de duplicidade (409)
+│   ├── ConflictException.java      -> conflito de duplicidade (409)
+│   ├── ErrorResponse.java          -> payload padrão de erro (timestamp/status/erro/mensagem/path/errors)
+│   └── GlobalExceptionHandler.java -> @RestControllerAdvice com mapeamento de erros → HTTP
 ├── repository/
 │   ├── UserRepository.java         -> JpaRepository<User, Long>
 │   └── FavoriteRepository.java     -> JpaRepository<Favorite, Long>
 └── service/
     ├── UserService.java            -> CRUD de usuário + hash de senha
+    ├── GoogleUserService.java      -> provisiona/vincula usuário do Google por email
     └── FavoriteService.java        -> adicionar/listar/remover favoritos
 src/main/resources/application.properties
-src/test/java/jairo/investviewapi/InvestviewApiApplicationTests.java
+.env.example                        -> modelo das variáveis de ambiente (inclui GOOGLE_CLIENT_ID e APP_SECURITY_ADMIN_EMAILS)
+src/test/java/jairo/investviewapi/
+├── InvestviewApiApplicationTests.java -> teste de contexto
+└── controller/
+    ├── AuthControllerTest.java        -> testes de login Google via MockMvc + jwt()
+    └── OwnerAuthorizationTest.java    -> testes de IDOR e RBAC (USER vs ADMIN)
 docker-compose.yml                  -> PostgreSQL + Redis
 README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
 docs/ONBOARDING.md                  -> resumo para novo colaborador
+docs/FRONT_TEST_PROMPT.md           -> prompt para gerar front-end de testes (Google auth + rotas)
 ```
 
 ## Estado atual
@@ -137,15 +157,20 @@ Pronto:
 - [x] H2 em memória para dev + console em `/h2-console`
 - [x] Favoritos simplificados: `Favorite` armazena diretamente `symbol`, `type` (`STOCK, FII, ETF, CRYPTO`) e `name` (opcional), com constraint unique `(user_id, type, symbol)`. Remoção da entidade `Asset` e de `AssetRepository`.
 - [x] `FavoriteController`/`FavoriteService`: adicionar (normalização de symbol + prevenção de duplicidade 409), listar por usuário e remover (404); Swagger documentado com `@Tag` e `@Operation`.
+- [x] Tratamento global de exceções (`GlobalExceptionHandler` + `ErrorResponse`) com respostas de erro padronizadas; email duplicado agora retorna 409 (`ConflictException`).
+- [x] `GlobalExceptionHandler` agora estende `ResponseEntityExceptionHandler`, mapeando exceções padrão do Spring MVC (400/405/406/415) em vez de caírem no 500 genérico; inclui `ConstraintViolationException` → 400.
+- [x] Autenticação com Google (OAuth2 Resource Server / JWT): `JwtDecoder` valida issuer + audience; `GoogleUserSyncFilter` provisiona/vincula `User` por email (JIT) com `google_sub`; `GET /auth/me`; chains separadas por profile (dev/test com form login + Basic; prod só JWT); CORS configurável.
+- [x] `AuthControllerTest` (integração com MockMvc + `jwt()`): valida provisionamento via `/auth/me` e rejeição de token sem email verificado (2 testes passando).
+- [x] Login Google validado ponta a ponta no front (ID token aceito pela API; usuário provisionado) em 2026-11-08.
+- [x] Autorização por dono: `CurrentUserProvider` deriva o `User` do JWT (email verificado) e bloqueia com 403 o acesso a favoritos de outro usuário.
+- [x] Controle de acesso baseado em papéis (RBAC): criado enum `Role` (`USER`, `ADMIN`), bloqueio de `/users/**` exclusivamente para `ADMIN` (impedindo que usuários comuns logados pelo Google deletem ou gerenciem usuários) e permissão de favoritos `/users/*/favorites/**` para `USER` e `ADMIN`. Configuração de admins via `APP_SECURITY_ADMIN_EMAILS`. Testes atualizados em `OwnerAuthorizationTest` (9 testes passando no total da suíte).
 
 Pendente:
 
-- [ ] Tratamento global de exceções (handler para email duplicado etc.)
 - [ ] Entidade `Favorite` evoluir com campos de negócio (se necessário)
 - [ ] Migrations (Flyway/Liquibase) e remoção de `ddl-auto=update`
-- [ ] Evoluir autenticação para OAuth2/banco (remover usuário em memória)
-- [ ] Testes de integração dos endpoints
-- [ ] Documentação dos endpoints no Swagger
+- [ ] Testes de integração dos demais endpoints (`/users`, favoritos) e do fluxo com token real
+- [ ] Documentação dos endpoints no Swagger (UserController e AuthController)
 
 ## Git
 
@@ -156,7 +181,7 @@ Pendente:
   - `bf8ae87` docs: registra commit inicial e remote no contexto de IA
   - `f804dfa` docs: adiciona README do projeto
   - `fc6e782` feat:Implementação do crud da entity User
-  - `bc06fa8` feat: implementa gerenciamento de favoritos simplificado e documentação Swagger
+  - `3ee221e` feat: implementa gerenciamento de favoritos simplificado e documentação Swagger
 
 ## Decisões
 
@@ -240,6 +265,69 @@ Pendente:
   `GET /{id}`, `PUT /{id}`, `DELETE /{id}` (204). Usa `@Valid` nos DTOs de
   entrada. `ResourceNotFoundException` anotada com `@ResponseStatus(NOT_FOUND)`
   para retornar 404.
+- **Tratamento global de exceções:** `GlobalExceptionHandler`
+  (`@RestControllerAdvice`) padroniza o corpo de erro via `ErrorResponse`
+  (`timestamp`, `status`, `error`, `message`, `path`, `errors`). Mapeamentos:
+  `ResourceNotFoundException`→404, `ConflictException`→409,
+  `DataIntegrityViolationException`→409 (rede de segurança para unique/FK),
+  `MethodArgumentNotValidException`→400 com lista de erros por campo,
+  `IllegalArgumentException`→400, `HttpMessageNotReadableException`→400 (JSON/enum
+  inválido), `NoResourceFoundException`→404 e `Exception`→500 (mensagem genérica,
+  sem vazar detalhes). `UserService.create`/`update` passaram a lançar
+  `ConflictException` para email duplicado (antes era `IllegalArgumentException`,
+  que virava 500). As anotações `@ResponseStatus` das exceções foram mantidas
+  (o handler tem precedência, mas o status é o mesmo).
+- **Exceções padrão do Spring MVC:** `GlobalExceptionHandler` passou a estender
+  `ResponseEntityExceptionHandler` (Spring 7) para mapear automaticamente
+  `MethodArgumentTypeMismatch`→400, `HttpRequestMethodNotSupported`→405,
+  `HttpMediaTypeNotSupported`→415, `HttpMediaTypeNotAcceptable`→406,
+  `MissingServletRequestParameter`→400, entre outros, evitando que caiam no
+  `@ExceptionHandler(Exception.class)` como 500. O corpo continua padronizado via
+  `ErrorResponse` (override de `handleExceptionInternal`). Foram sobrescritos
+  `handleMethodArgumentNotValid` (lista de erros por campo),
+  `handleHttpMessageNotReadable` e `handleNoResourceFoundException` (mensagens em
+  português). Adicionado handler de `ConstraintViolationException`→400 (para
+  `@Validated` em parâmetros). Importante: não se deve ter `@ExceptionHandler`
+  duplicado para tipos já cobertos pelo `ResponseEntityExceptionHandler` (gera
+  mapeamento ambíguo); nesses casos, sobrescrever o método `handleXxx`.
+  Em Spring Framework 7 a anotação de nulidade é `org.jspecify.annotations.Nullable`.
+- **Autenticação com Google (Resource Server):** adotado OAuth2 Resource Server com
+  JWT (o front faz login no Google e envia `Authorization: Bearer <id_token>`).
+  A API não usa sessão/cookie em produção (`SessionCreationPolicy.STATELESS`).
+  `JwtDecoder` usa `jwk-set-uri` do Google (sem chamada de rede no startup) e valida
+  issuer (`https://accounts.google.com`) + audience (`GOOGLE_CLIENT_ID`) + timestamp.
+  A dependência `spring-boot-starter-security-oauth2-client` foi trocada por
+  `spring-boot-starter-security-oauth2-resource-server`.
+- **Provisionamento JIT do usuário:** `GoogleUserSyncFilter` roda após o
+  `BearerTokenAuthenticationFilter`; para cada request com `JwtAuthenticationToken`
+  com `email` e `email_verified=true`, chama `GoogleUserService.provision`, que
+  busca o `User` por email, cria se não existir (senha nula) e grava o `google_sub`.
+  Isso mantém o vínculo com favoritos (FK `user_id`). `User.password` passou a ser
+  nullable e foi adicionado `google_sub` (único, nullable).
+- **Profiles de segurança:** `DevSecurityConfig` (`@Profile("!prod")`) mantém
+  `admin`/`admin` via `InMemoryUserDetailsManager` + form login + HTTP Basic + JWT,
+  e libera H2/Swagger. `ProdSecurityConfig` (`@Profile("prod")`) aceita somente JWT,
+  sem usuário em memória e sem H2. `SecurityConfig` guarda beans comuns
+  (`PasswordEncoder`, `JwtDecoder`, `CorsConfigurationSource`).
+- **CORS:** `CorsConfigurationSource` libera origens de `APP_CORS_ALLOWED_ORIGINS`
+  (default `http://localhost:3000,http://localhost:5173`), métodos REST e headers,
+  com `allowCredentials=true`. Necessário para a SPA chamar a API com Bearer token.
+- **Autorização por dono (IDOR):** `CurrentUserProvider` (pacote `security`) resolve
+  o `User` a partir do `JwtAuthenticationToken` no `SecurityContext`, exigindo
+  `email` presente e `email_verified=true`, e `requireOwner(userId)` compara o `id`
+  do usuário do token com o `userId` da rota. `FavoriteController` (todos os endpoints)
+  chama `requireOwner` antes do service. Violação lança `AccessDeniedException`, mapeada
+  para 403 no `GlobalExceptionHandler`.
+- **Controle de papéis (RBAC - `ROLE_ADMIN` vs `ROLE_USER`):** para impedir que qualquer
+  usuário comum autenticado com Google acesse endpoints administrativos (`/users/**`) e
+  possa deletar usuários, foi criado o enum `Role` (`USER`, `ADMIN`) na entidade `User`.
+  Usuários provisionados via Google recebem por padrão `Role.USER`. O sistema permite
+  configurar e-mails de administradores via `APP_SECURITY_ADMIN_EMAILS` (em `application.properties`
+  e `.env`), atribuindo `Role.ADMIN` aos e-mails correspondentes. As security chains
+  (`DevSecurityConfig` e `ProdSecurityConfig`) e o `UserController` exigem `hasRole('ADMIN')`
+  para `/users/**`, enquanto `/users/*/favorites/**` permanece liberado para `USER` e `ADMIN`
+  (com `requireOwner`). O `GoogleUserSyncFilter` injeta a autoridade `ROLE_<ROLE>` no
+  `SecurityContextHolder`. O `UserResponse` passa a exportar o campo `role`.
 
 ## Observações do ambiente
 
@@ -258,6 +346,76 @@ Pendente:
   por isso foi criada a `SecurityConfig` com credenciais fixas de dev.
 
 ## Histórico de conversas
+
+### 2026-11-08
+- Implementado controle de papéis (RBAC: `ROLE_ADMIN` vs `ROLE_USER`) para resolver o
+  problema em que qualquer usuário autenticado com Google tinha acesso às rotas de `/users`
+  e podia deletar usuários. Criado enum `Role` (`USER`, `ADMIN`), adicionado campo `role`
+  na entidade `User` e em `UserResponse`. O `GoogleUserService` atribui `Role.ADMIN` caso
+  o e-mail conste em `APP_SECURITY_ADMIN_EMAILS` (ou `Role.USER` como padrão). O
+  `GoogleUserSyncFilter` popula `ROLE_<ROLE>` nas authorities do `SecurityContext`.
+  `UserController` foi anotado com `@PreAuthorize("hasRole('ADMIN')")`, e as chains de
+  segurança foram configuradas para exigir `hasRole('ADMIN')` em `/users/**` e permitir
+  `hasAnyRole('USER', 'ADMIN')` em `/users/*/favorites/**`. O `OwnerAuthorizationTest`
+  foi atualizado validando que usuários comuns recebem 403 Forbidden ao tentar deletar ou
+  acessar `/users/**`, enquanto administradores conseguem gerenciar e deletar usuários.
+  Todos os 9 testes passando com sucesso.
+- Implementada autorização por dono (correção de IDOR): criado `CurrentUserProvider`
+  que resolve o `User` do JWT (email + `email_verified=true`) e `requireOwner(userId)`
+  para comparar com o `id` da rota. Aplicado em `UserController` (GET/PUT/DELETE
+  `/users/{id}`) e `FavoriteController` (adicionar/listar/remover). Adicionado handler
+  de `AccessDeniedException`→403 no `GlobalExceptionHandler`. Removido `GET /users`
+  (listagem de todos) e `UserService.findAll`, por expor dados de todos e não haver
+  admin. Criado `OwnerAuthorizationTest` (MockMvc + `jwt()`) com 6 testes: acesso ao
+  próprio perfil/favoritos OK, acesso a outro usuário/favoritos 403, PUT/DELETE de
+  outro 403 e token sem email verificado 403. `mvnw.cmd test` no Windows: 9 testes
+  passando (1 contexto + 2 Auth + 6 autorização). `docs/FRONT_TEST_PROMPT.md`
+  atualizado (sem `GET /users`, com 403).
+- Implementada autenticação com Google via OAuth2 Resource Server (JWT), conforme
+  decisões do usuário: front envia `Bearer <id_token>`; usuários persistidos em
+  `tb_users` (provisionamento JIT por email + `google_sub`); login de dev
+  `admin`/`admin` mantido apenas fora de `prod`. Adicionados: `GoogleUserService`,
+  `GoogleUserSyncFilter`, `AuthController` (`GET /auth/me`), `DevSecurityConfig`,
+  `ProdSecurityConfig`, `JwtDecoder` com issuer+audience, CORS configurável e
+  `.env.example` (`GOOGLE_CLIENT_ID`, `APP_CORS_ALLOWED_ORIGINS`). Removido o
+  starter `oauth2-client`. `User.password` agora é nullable. Compilado e testado
+  (`mvnw.cmd compile`/`test`) com sucesso. Adicionado `GOOGLE_CLIENT_ID` ao `.env`
+  (client_id do projeto `api-investview`); o `client_secret` **não** foi armazenado
+  e deve ser rotacionado (foi exposto no chat). Criado `AuthControllerTest` (MockMvc
+  + `jwt()`): 2 testes passando (provisionamento e rejeição de email não verificado).
+- `GlobalExceptionHandler` refatorado para estender `ResponseEntityExceptionHandler`:
+  exceções padrão do Spring MVC passam a retornar 400/405/406/415 corretamente (antes
+  caíam no 500 genérico do `@ExceptionHandler(Exception.class)`). Overrides de
+  `handleExceptionInternal` (corpo `ErrorResponse`), `handleMethodArgumentNotValid`
+  (erros por campo), `handleHttpMessageNotReadable` e `handleNoResourceFoundException`
+  (mensagens em PT). Adicionado `ConstraintViolationException`→400. Compilado e
+  testado via `mvnw.cmd` no Windows (WSL sem Java): `compile` e `test` OK.
+- Discutido o papel do Redis: hoje só provisionado (dependência + `REDIS_*`), sem
+  uso. Papel previsto: cache de leitura (favoritos/usuário) via Spring Cache +
+  Redis, cache de cotações com TTL curto (só se o backend passar a chamar a
+  brapi) e sessão/segurança quando a auth migrar para OAuth2/banco. Confirmado
+  que Redis é server-side: se o front chama a brapi direto, o cache é no browser,
+  não no Redis.
+- Discutido atributo de "logado/ativo" no `User`: "logado" é estado de sessão
+  (não deve ir para a entidade; se quiser "online", usar Redis com TTL). "Ativo"
+  (`enabled`) só faz sentido junto com a migração da auth para o banco, pois hoje
+  a auth é `InMemoryUserDetailsManager`. Decisão adiada.
+- Implementado tratamento global de exceções: criados `ErrorResponse` (record) e
+  `GlobalExceptionHandler` (`@RestControllerAdvice`). `UserService.create`/`update`
+  agora lançam `ConflictException` (409) em email duplicado. Handlers para 400
+  (Bean Validation, JSON inválido, `IllegalArgumentException`), 404, 409
+  (inclui `DataIntegrityViolationException`) e 500 genérico.
+- Não foi possível compilar/testar no WSL (sem Java/Maven); validar no IntelliJ
+  com `./mvnw test`.
+- Criado (a pedido) um prompt para gerar um front-end **mínimo** de testes
+  (React + Vite + TypeScript, tela única) cobrindo login Google via ID token
+  (Bearer), `/auth/me`, CRUD básico de `/users` e favoritos, com contrato da API,
+  configuração de CORS/Google Cloud e checklist de aceite. Salvo em
+  `docs/FRONT_TEST_PROMPT.md`. Nenhuma alteração no backend.
+- **Login Google validado ponta a ponta:** front (OAuth Client ID tipo Web +
+  `http://localhost:5173` como origem autorizada) obteve o ID token e a API o
+  aceitou (issuer/audience), provisionando o usuário. Auth via Google confirmada
+  como funcionando.
 
 ### 2026-11-07
 - Definida arquitetura em camadas por responsabilidade.
@@ -324,11 +482,15 @@ Pendente:
 
 ## Próximos passos
 
-1. Commitar e enviar `docs/ONBOARDING.md` + `docs/AI_CONTEXT.md`.
-2. Definir a modelagem de domínio inicial (ex.: usuário, ativo, carteira,
-   transação).
-3. Criar entidades JPA, repositórios, serviços e controllers.
-4. Implementar os primeiros endpoints REST e documentar no Swagger.
-5. Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
-6. Evoluir a autenticação para OAuth2/banco.
-7. Escrever testes de integração dos endpoints.
+1. ~~Criar credenciais no Google Cloud Console e validar o login no front.~~
+   **Concluído em 2026-11-08:** login Google validado ponta a ponta.
+2. ~~Implementar autorização por dono e RBAC (`ROLE_ADMIN` vs `ROLE_USER`).~~
+   **Concluído em 2026-11-08:** `CurrentUserProvider` protege favoritos contra IDOR e
+   `/users/**` é restrito a administradores (usuários normais recebem 403 Forbidden).
+3. ~~Escrever testes de integração com JWT mockado.~~
+   **Concluído em 2026-11-08:** 9 testes automatizados cobrindo provisionamento, token
+   inválido, controle de dono e isolamento administrativo.
+4. Commitar as alterações acumuladas (autenticação Google, IDOR, RBAC, testes e `.env.example`).
+5. Documentar `UserController` e `AuthController` no Swagger com anotações OpenAPI (`@Tag`, `@Operation`, `@ApiResponse`).
+6. Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
+7. Implementar cache Redis de favoritos/usuário (quando fizer sentido).

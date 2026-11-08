@@ -58,6 +58,7 @@ Pré-requisitos: JDK 25, Docker e Docker Compose.
    - API: http://localhost:8080
    - Swagger UI: http://localhost:8080/swagger-ui.html
    - OpenAPI JSON: http://localhost:8080/v3/api-docs
+   - h2 http://localhost:8080/h2-console/
 
 4. Rodar testes:
 
