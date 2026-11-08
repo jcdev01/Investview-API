@@ -53,7 +53,7 @@ URLs úteis:
 ## Credenciais e variáveis de ambiente
 
 > Os valores sensíveis **não** ficam no código/documentação. Ficam apenas no
-> arquivo `.env` (na raiz, ignorado pelo Git). O modelo fica em `.env.example`.
+> arquivo `.env` (na raiz, ignorado pelo Git). As variáveis necessárias estão documentadas na tabela abaixo.
 > Não usar os valores de dev em produção.
 
 Variáveis esperadas (obrigatórias; sem defaults embutidos):
@@ -117,7 +117,6 @@ src/main/java/jairo/investviewapi/
     ├── GoogleUserService.java      -> provisiona/vincula usuário do Google por email
     └── FavoriteService.java        -> adicionar/listar/remover favoritos
 src/main/resources/application.properties
-.env.example                        -> modelo das variáveis de ambiente (inclui GOOGLE_CLIENT_ID e APP_SECURITY_ADMIN_EMAILS)
 src/test/java/jairo/investviewapi/
 ├── InvestviewApiApplicationTests.java -> teste de contexto
 └── controller/
@@ -349,6 +348,8 @@ Pendente:
 ## Histórico de conversas
 
 ### 2026-11-08
+- Removido o arquivo `.env.example` do repositório Git e enviado push para o GitHub a
+  pedido do usuário, mantendo a documentação das variáveis apenas no contexto de IA.
 - Implementado controle de papéis (RBAC: `ROLE_ADMIN` vs `ROLE_USER`) para resolver o
   problema em que qualquer usuário autenticado com Google tinha acesso às rotas de `/users`
   e podia deletar usuários. Criado enum `Role` (`USER`, `ADMIN`), adicionado campo `role`
