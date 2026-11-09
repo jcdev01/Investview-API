@@ -42,7 +42,7 @@ public class FavoriteController {
     public ResponseEntity<FavoriteResponse> add(
             @PathVariable Long userId,
             @Valid @RequestBody FavoriteRequest request) {
-        currentUserProvider.requireOwner(userId);
+        currentUserProvider.requireOwnerOrAdmin(userId);
         FavoriteResponse response = favoriteService.add(userId, request);
         return ResponseEntity
                 .created(URI.create("/users/" + userId + "/favorites/" + response.id()))
@@ -57,7 +57,7 @@ public class FavoriteController {
     })
     @GetMapping
     public ResponseEntity<List<FavoriteResponse>> listByUser(@PathVariable Long userId) {
-        currentUserProvider.requireOwner(userId);
+        currentUserProvider.requireOwnerOrAdmin(userId);
         return ResponseEntity.ok(favoriteService.listByUser(userId));
     }
 
@@ -71,7 +71,7 @@ public class FavoriteController {
     public ResponseEntity<Void> remove(
             @PathVariable Long userId,
             @PathVariable Long favoriteId) {
-        currentUserProvider.requireOwner(userId);
+        currentUserProvider.requireOwnerOrAdmin(userId);
         favoriteService.remove(userId, favoriteId);
         return ResponseEntity.noContent().build();
     }

@@ -127,7 +127,7 @@ README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
 docs/ONBOARDING.md                  -> resumo para novo colaborador
-docs/FRONT_TEST_PROMPT.md           -> prompt para gerar front-end de testes (Google auth + rotas)
+docs/GRAPH_PROMPT.md                -> prompt/especificação do grafo de ativos (Ideia 1)
 ```
 
 ## Estado atual
@@ -162,14 +162,16 @@ Pronto:
 - [x] `AuthControllerTest` (integração com MockMvc + `jwt()`): valida provisionamento via `/auth/me` e rejeição de token sem email verificado (2 testes passando).
 - [x] Login Google validado ponta a ponta no front (ID token aceito pela API; usuário provisionado) em 2026-11-08.
 - [x] Autorização por dono: `CurrentUserProvider` deriva o `User` do JWT (email verificado) e bloqueia com 403 o acesso a favoritos de outro usuário.
-- [x] Controle de acesso baseado em papéis (RBAC): criado enum `Role` (`USER`, `ADMIN`), bloqueio de `/users/**` exclusivamente para `ADMIN` (impedindo que usuários comuns logados pelo Google deletem ou gerenciem usuários) e permissão de favoritos `/users/*/favorites/**` para `USER` e `ADMIN`. Configuração de admins via `APP_SECURITY_ADMIN_EMAILS`. Testes atualizados em `OwnerAuthorizationTest` (9 testes passando no total da suíte).
+- [x] Controle de acesso baseado em papéis (RBAC): criado enum `Role` (`USER`, `ADMIN`), bloqueio de `/users/**` exclusivamente para `ADMIN` (impedindo que usuários comuns logados pelo Google deletem ou gerenciem usuários) e permissão de favoritos `/users/*/favorites/**` para `USER` e `ADMIN`. Configuração de admins via `APP_SECURITY_ADMIN_EMAILS`. Testes atualizados em `OwnerAuthorizationTest` (10 testes passando no total da suíte).
+- [x] `GET /users` (listagem) mantido, porém restrito a `ADMIN` (o `UserController` inteiro é `@PreAuthorize("hasRole('ADMIN')")`); `UserService.findAll` permanece em uso.
+- [x] Swagger documentado em todos os controllers (`AuthController`, `UserController` e `FavoriteController`) com `@Tag`, `@Operation` e `@ApiResponse`.
+- [x] Favoritos: `FavoriteController` usa `requireOwnerOrAdmin`, alinhando com as security chains (que permitem `USER` e `ADMIN` em `/users/*/favorites/**`). Dono acessa os próprios favoritos; `ADMIN` pode acessar/gerenciar favoritos de qualquer usuário.
 
 Pendente:
 
 - [ ] Entidade `Favorite` evoluir com campos de negócio (se necessário)
 - [ ] Migrations (Flyway/Liquibase) e remoção de `ddl-auto=update`
 - [ ] Testes de integração dos demais endpoints (`/users`, favoritos) e do fluxo com token real
-- [ ] Documentação dos endpoints no Swagger (UserController e AuthController)
 
 ## Git
 
@@ -231,9 +233,10 @@ Pendente:
   `GenerationType.IDENTITY`, `name`, `email` único e `password` (hash). Por ora
   sem `enabled`/`role`/timestamps — serão avaliados depois. Anotações Lombok
   (`@Getter/@Setter/@Builder`).
-- **Sem roles:** o sistema terá apenas usuário comum; não haverá papel/admin
-  (`Role` foi descartado). Autenticação/autorização será revisitada quando a
-  segurança evoluir.
+- **Sem roles (SUPERADO em 2026-11-08):** decisão inicial de ter apenas usuário
+  comum, sem papel/admin (`Role` descartado). Foi revertida pela decisão de RBAC
+  (`ROLE_ADMIN` vs `ROLE_USER`) registrada abaixo, após constatar que qualquer
+  usuário autenticado podia gerenciar `/users`. Mantida aqui apenas como histórico.
 - **`User` 1:N `Favorite`:** `User.favorites` com `@OneToMany(mappedBy = "user",
   cascade = ALL, orphanRemoval = true)` e `List<Favorite>` inicializada. Do outro
   lado, `Favorite.user` com `@ManyToOne(fetch = LAZY, optional = false)` e
@@ -316,8 +319,9 @@ Pendente:
   o `User` a partir do `JwtAuthenticationToken` no `SecurityContext`, exigindo
   `email` presente e `email_verified=true`, e `requireOwner(userId)` compara o `id`
   do usuário do token com o `userId` da rota. `FavoriteController` (todos os endpoints)
-  chama `requireOwner` antes do service. Violação lança `AccessDeniedException`, mapeada
-  para 403 no `GlobalExceptionHandler`.
+  chama `requireOwnerOrAdmin` antes do service: o dono acessa os próprios favoritos e
+  `ADMIN` pode acessar/gerenciar os de qualquer usuário, alinhado às security chains.
+  Violação lança `AccessDeniedException`, mapeada para 403 no `GlobalExceptionHandler`.
 - **Controle de papéis (RBAC - `ROLE_ADMIN` vs `ROLE_USER`):** para impedir que qualquer
   usuário comum autenticado com Google acesse endpoints administrativos (`/users/**`) e
   possa deletar usuários, foi criado o enum `Role` (`USER`, `ADMIN`) na entidade `User`.
@@ -346,6 +350,32 @@ Pendente:
   por isso foi criada a `SecurityConfig` com credenciais fixas de dev.
 
 ## Histórico de conversas
+
+### 2026-11-09
+- Corrigidas divergências entre o código e este contexto (análise do projeto):
+  - `UserController` documentado no Swagger (`@Tag`, `@Operation`, `@ApiResponse`
+    em todos os endpoints). A pendência de documentação de `AuthController` já
+    estava concluída antes.
+  - `FavoriteController` passou a usar `requireOwnerOrAdmin` (antes `requireOwner`),
+    alinhando com as security chains que permitem `USER` e `ADMIN` em
+    `/users/*/favorites/**`. Assim o `ADMIN` deixa de receber 403 ao acessar
+    favoritos de outro usuário.
+  - Contexto corrigido: `GET /users` e `UserService.findAll` **não** foram removidos
+    (a entrada de 2026-11-08 estava desatualizada); a listagem existe e é restrita a
+    `ADMIN`. `UserController` é protegido por RBAC (`@PreAuthorize`), e não por
+    `requireOwner` como constava. Referência ao inexistente `docs/FRONT_TEST_PROMPT.md`
+    removida da estrutura. Decisão "Sem roles" marcada como superada.
+  - Adicionado teste `shouldAllowAdminToAccessAnotherUserFavorites` em
+    `OwnerAuthorizationTest`, cobrindo o acesso de `ADMIN` aos favoritos de outro
+    usuário. Suíte com 10 testes passando.
+  - Validação via Windows (`cmd.exe /c mvnw.cmd test`): `compile` OK e 10 testes
+    passando (1 contexto + 2 Auth + 7 autorização).
+- Discutida a implementação de uma estrutura de grafos no projeto. Escolhida a
+  **Ideia 1 — grafo global de ativos por coocorrência de favoritos**: nós = ativos
+  (`TYPE:SYMBOL`), arestas entre ativos favoritados pelo mesmo usuário e peso = nº de
+  usuários distintos que favoritaram o par. Sem mudança de schema e sem dependências
+  novas. Gerado um prompt detalhado de implementação (contratos dos endpoints `/graph`,
+  BFS para caminho mínimo, componentes conexos e testes), salvo em `docs/GRAPH_PROMPT.md`.
 
 ### 2026-11-08
 - Removido o arquivo `.env.example` do repositório Git e enviado push para o GitHub a
@@ -491,9 +521,14 @@ Pendente:
    `/users/**` é restrito a administradores (usuários normais recebem 403 Forbidden).
 3. ~~Escrever testes de integração com JWT mockado.~~
    **Concluído em 2026-11-08:** 9 testes automatizados cobrindo provisionamento, token
-   inválido, controle de dono e isolamento administrativo.
+   inválido, controle de dono e isolamento administrativo. **Atualizado em 2026-11-09:**
+   10 testes (adicionado `shouldAllowAdminToAccessAnotherUserFavorites`).
 4. ~~Commitar as alterações acumuladas.~~
    **Concluído em 2026-11-08:** commit `c99c050`.
-5. Documentar `UserController` e `AuthController` no Swagger com anotações OpenAPI (`@Tag`, `@Operation`, `@ApiResponse`).
+5. ~~Documentar `UserController` e `AuthController` no Swagger.~~
+   **Concluído em 2026-11-09:** todos os controllers (`AuthController`, `UserController`,
+   `FavoriteController`) documentados com `@Tag`, `@Operation` e `@ApiResponse`.
 6. Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
 7. Implementar cache Redis de favoritos/usuário (quando fizer sentido).
+8. Implementar o grafo global de ativos por coocorrência de favoritos (Ideia 1),
+   conforme `docs/GRAPH_PROMPT.md` (endpoints `/graph`, BFS, componentes e testes).

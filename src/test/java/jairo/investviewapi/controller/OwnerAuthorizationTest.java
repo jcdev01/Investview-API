@@ -116,6 +116,12 @@ class OwnerAuthorizationTest {
     }
 
     @Test
+    void shouldAllowAdminToAccessAnotherUserFavorites() throws Exception {
+        mockMvc.perform(get("/users/{id}/favorites", other.getId()).with(jwtFor(admin)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void shouldDenyAccessWhenEmailIsNotVerified() throws Exception {
         mockMvc.perform(get("/users/{id}/favorites", owner.getId())
                         .with(jwt().jwt(jwt -> jwt
