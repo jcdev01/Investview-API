@@ -422,9 +422,12 @@ Pendente:
 - Criados (a pedido) `Dockerfile` e `.dockerignore` para hospedar **somente a
   API** (o banco ficará hospedado em outro lugar): build multi-stage com
   `maven:3.9-eclipse-temurin-25` (build) e runtime `eclipse-temurin:25-jre-alpine`
-  (usuário não-root `spring`, `EXPOSE 8080`, `JAVA_OPTS` expansível). A imagem
-  define `SPRING_PROFILES_ACTIVE=prod` como padrão (overridável com `-e`);
-  conexões com Postgres/Redis externos entram por env (`DB_URL`, `DB_USERNAME`,
+  (usuário não-root `spring`, `EXPOSE 8080`, `JAVA_OPTS` opcional em runtime).
+  A imagem define `SPRING_PROFILES_ACTIVE=prod` como padrão (overridável com
+  `-e`); `JAVA_OPTS` não é declarado como `ENV` para o serviço de hospedagem
+  não exigi-lo — se informado no painel/`docker run -e`, o ENTRYPOINT o aplica
+  (ex.: `-XX:MaxRAMPercentage=75.0`). Conexões
+  com Postgres/Redis externos entram por env (`DB_URL`, `DB_USERNAME`,
   `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `APP_OAUTH_GOOGLE_CLIENT_ID`,
   `APP_CORS_ALLOWED_ORIGINS`, `APP_SECURITY_ADMIN_EMAILS`). O `.dockerignore`
   garante que `.env`, `target`, `.git`, `docs` etc. não entrem na imagem.
