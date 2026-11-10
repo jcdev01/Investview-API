@@ -5,7 +5,8 @@
 >
 > **Status: em desenvolvimento ativo (retomado em 2026-11-08).**
 > Autenticação Google OAuth2 Resource Server, tratamento de exceções, proteção
-> contra IDOR e controle de acesso RBAC (`ROLE_ADMIN` vs `ROLE_USER`) implementados.
+> contra IDOR, controle de acesso RBAC (`ROLE_ADMIN` vs `ROLE_USER`) e grafo
+> global de ativos por coocorrência de favoritos implementados.
 
 ## Resumo do projeto
 
@@ -92,13 +93,19 @@ src/main/java/jairo/investviewapi/
 ├── controller/
 │   ├── AuthController.java         -> /auth/me (usuário autenticado via Google)
 │   ├── UserController.java         -> CRUD REST de usuário (/users)
-│   └── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
+│   ├── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
+│   └── GraphController.java        -> endpoints /graph (Swagger documentado)
 ├── dto/
 │   ├── UserCreateRequest.java      -> record de entrada (create) + validação
 │   ├── UserUpdateRequest.java      -> record de entrada (update) + validação
 │   ├── UserResponse.java           -> record de saída (sem senha)
 │   ├── FavoriteRequest.java        -> record de entrada (symbol, type, name) + validação
-│   └── FavoriteResponse.java       -> record de saída (id, symbol, type, name)
+│   ├── FavoriteResponse.java       -> record de saída (id, symbol, type, name)
+│   ├── GraphNode.java              -> nó do grafo (id "TYPE:SYMBOL", symbol, type, name)
+│   ├── GraphEdge.java              -> aresta (source, target, weight)
+│   ├── GraphResponse.java          -> { nodes, edges } do GET /graph
+│   ├── NeighborResponse.java       -> vizinho com peso (id, symbol, type, name, weight)
+│   └── PathResponse.java           -> resultado do BFS (found, path, length)
 ├── entity/
 │   ├── User.java                   -> entidade JPA de usuário (1:N favorites, role USER/ADMIN)
 │   ├── Role.java                   -> enum de perfis de acesso (USER, ADMIN)
@@ -111,23 +118,32 @@ src/main/java/jairo/investviewapi/
 │   └── GlobalExceptionHandler.java -> @RestControllerAdvice com mapeamento de erros → HTTP
 ├── repository/
 │   ├── UserRepository.java         -> JpaRepository<User, Long>
-│   └── FavoriteRepository.java     -> JpaRepository<Favorite, Long>
+│   ├── FavoriteRepository.java     -> JpaRepository<Favorite, Long> + findAllWithUserId (projeção)
+│   └── FavoriteView.java          -> projeção (userId, type, symbol, name) para montar o grafo
+├── graph/
+│   ├── Graph.java                  -> interface (addNode, addEdge, neighbors, edges, weight, shortestPath, components)
+│   └── AdjacencyListGraph.java     -> implementação com Maps (BFS, DFS e EdgeKey normalizado)
 └── service/
     ├── UserService.java            -> CRUD de usuário + hash de senha
     ├── GoogleUserService.java      -> provisiona/vincula usuário do Google por email
+    ├── GraphService.java           -> monta o grafo a partir dos favoritos (agregados, sem expor usuários)
     └── FavoriteService.java        -> adicionar/listar/remover favoritos
 src/main/resources/application.properties
 src/test/java/jairo/investviewapi/
 ├── InvestviewApiApplicationTests.java -> teste de contexto
-└── controller/
-    ├── AuthControllerTest.java        -> testes de login Google via MockMvc + jwt()
-    └── OwnerAuthorizationTest.java    -> testes de IDOR e RBAC (USER vs ADMIN)
+├── controller/
+│   ├── AuthControllerTest.java        -> testes de login Google via MockMvc + jwt()
+│   └── OwnerAuthorizationTest.java    -> testes de IDOR e RBAC (USER vs ADMIN)
+└── graph/
+    └── GraphControllerTest.java       -> testes do grafo (nós/arestas/pesos, vizinhos, BFS, componentes, 400/404/401)
 docker-compose.yml                  -> PostgreSQL + Redis
 README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
 docs/ONBOARDING.md                  -> resumo para novo colaborador
 docs/GRAPH_PROMPT.md                -> prompt/especificação do grafo de ativos (Ideia 1)
+docs/GRAPH_VIEW_PROMPT.md           -> prompt p/ outra IA criar front visual de testes do grafo
+docs/GRAFO_EXPLICACAO.txt           -> explicação em texto puro dos conceitos (vértice, aresta, peso, vizinho, grau, caminho, componente)
 ```
 
 ## Estado atual
@@ -166,9 +182,11 @@ Pronto:
 - [x] `GET /users` (listagem) mantido, porém restrito a `ADMIN` (o `UserController` inteiro é `@PreAuthorize("hasRole('ADMIN')")`); `UserService.findAll` permanece em uso.
 - [x] Swagger documentado em todos os controllers (`AuthController`, `UserController` e `FavoriteController`) com `@Tag`, `@Operation` e `@ApiResponse`.
 - [x] Favoritos: `FavoriteController` usa `requireOwnerOrAdmin`, alinhando com as security chains (que permitem `USER` e `ADMIN` em `/users/*/favorites/**`). Dono acessa os próprios favoritos; `ADMIN` pode acessar/gerenciar favoritos de qualquer usuário.
+- [x] Grafo global de ativos por coocorrência de favoritos (Ideia 1): `GET /graph` (nós/arestas/pesos), `GET /graph/assets/{type}/{symbol}/neighbors` (peso desc), `GET /graph/path?from=TYPE:SYMBOL&to=TYPE:SYMBOL` (BFS) e `GET /graph/components` (componentes conexos). Pacote `graph` (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) + projeção `FavoriteView` no `FavoriteRepository` (sem N+1). Sem mudança de schema e sem dependências novas. `GraphControllerTest` com 10 testes; suíte completa com 20 testes passando.
 
 Pendente:
 
+- [ ] Cache do grafo no Redis (hoje o grafo é recalculado em memória a cada request)
 - [ ] Entidade `Favorite` evoluir com campos de negócio (se necessário)
 - [ ] Migrations (Flyway/Liquibase) e remoção de `ddl-auto=update`
 - [ ] Testes de integração dos demais endpoints (`/users`, favoritos) e do fluxo com token real
@@ -307,6 +325,9 @@ Pendente:
   busca o `User` por email, cria se não existir (senha nula) e grava o `google_sub`.
   Isso mantém o vínculo com favoritos (FK `user_id`). `User.password` passou a ser
   nullable e foi adicionado `google_sub` (único, nullable).
+  **Correção (2026-11-09):** `provision` é atômico contra corrida de INSERT
+  concorrente — executa via `TransactionTemplate` e, se violar o unique de email,
+  refaz a busca em transação nova (padrão insert-then-reselect).
 - **Profiles de segurança:** `DevSecurityConfig` (`@Profile("!prod")`) mantém
   `admin`/`admin` via `InMemoryUserDetailsManager` + form login + HTTP Basic + JWT,
   e libera H2/Swagger. `ProdSecurityConfig` (`@Profile("prod")`) aceita somente JWT,
@@ -332,6 +353,23 @@ Pendente:
   para `/users/**`, enquanto `/users/*/favorites/**` permanece liberado para `USER` e `ADMIN`
   (com `requireOwner`). O `GoogleUserSyncFilter` injeta a autoridade `ROLE_<ROLE>` no
   `SecurityContextHolder`. O `UserResponse` passa a exportar o campo `role`.
+- **Grafo global de ativos (Ideia 1):** grafo derivado apenas dos favoritos (backend não chama
+  APIs externas; o front continua consultando cotações apenas na brapi). Nó = ativo com id
+  `"<TYPE>:<SYMBOL>"`; aresta não direcionada = dois ativos favoritados pelo mesmo usuário
+  (ordem dos ids normalizada em `EdgeKey`); peso = nº de usuários distintos do par
+  (unique `(user_id, type, symbol)` garante pares únicos por usuário). Montagem no
+  `GraphService` via projeção `FavoriteView` (`findAllWithUserId` ordenado por user/id,
+  sem N+1), agrupamento por usuário em `LinkedHashMap` (ordem determinística) e combinação
+  de pares; `name` do nó = primeiro não nulo encontrado. Algoritmos em Java puro (sem libs):
+  BFS com predecessores para caminho mínimo, DFS iterativo para componentes conexos.
+  Endpoints em `/graph` exigem apenas autenticação (caem no `anyRequest().authenticated()`)
+  e expõem só agregados, nunca quem favoritou. Erros: `type` inválido ou `from`/`to` fora
+  do formato `TYPE:SYMBOL` → 400 (`IllegalArgumentException` ou `MethodArgumentTypeMismatch`
+  via `GlobalExceptionHandler`); ativo inexistente no grafo → 404 (`ResourceNotFoundException`)
+  — escolha documentada no Swagger; sem caminho → 200 com `found=false`. Vizinhos ordenados
+  por peso desc (desempate por id); componentes ordenados por tamanho desc. Pacote `graph`
+  separado (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) conforme
+  `docs/GRAPH_PROMPT.md`; DTOs em `dto/`. Cache no Redis é evolução futura.
 
 ## Observações do ambiente
 
@@ -352,6 +390,46 @@ Pendente:
 ## Histórico de conversas
 
 ### 2026-11-09
+- Implementado o grafo global de ativos por coocorrência de favoritos (Ideia 1 do
+  `docs/GRAPH_PROMPT.md`): pacote `graph` com `Graph` (interface), `AdjacencyListGraph`
+  (Maps + BFS + DFS), `GraphService` (montagem via projeção `FavoriteView`, sem N+1) e
+  `GraphController` (`GET /graph`, `GET /graph/assets/{type}/{symbol}/neighbors`,
+  `GET /graph/path`, `GET /graph/components`, todos autenticados, Swagger documentado).
+  DTOs `GraphNode`, `GraphEdge`, `GraphResponse`, `NeighborResponse`, `PathResponse`.
+  Sem mudança de schema e sem dependências novas; backend segue sem chamar APIs
+  externas (cotações continuam só na brapi, no front). Erros: formato `TYPE:SYMBOL`
+  inválido → 400; ativo inexistente no grafo → 404; sem caminho → 200 com `found=false`.
+  Criado `GraphControllerTest` (10 testes: grafo vazio, nós/arestas/pesos somados por
+  usuários distintos, ativo isolado, vizinhos por peso desc, BFS, desconexão, 404, 400,
+  componentes, 401). Suíte completa: 20 testes passando via `cmd.exe /c mvnw.cmd test`.
+- Reposicionados `GraphService` → `service/` e `GraphController` → `controller/`
+  para padronizar com a arquitetura em camadas do resto do projeto (o
+  `docs/GRAPH_PROMPT.md` sugeria tudo em `graph/`). O pacote `graph/` ficou apenas
+  com a estrutura de dados e algoritmos (`Graph`, `AdjacencyListGraph`), que não tem
+  camada equivalente (não são entity/dto/service/controller). Imports ajustados;
+  20 testes continuam passando.
+- Criado (a pedido) o prompt `docs/GRAPH_VIEW_PROMPT.md` para outra IA gerar um
+  front visual de testes do grafo: SPA única React+Vite+TS com login Google
+  (Bearer) ou Basic (dev), painel para popular usuários/favoritos, grafo
+  renderizado (cores por `AssetType`, espessura/label por peso), vizinhos ao
+  clicar no nó, menor caminho com highlight, componentes, tratamento de
+  401/400/404/409 e checklist de aceite. Cotações brapi opcionais. Nenhuma
+  alteração no backend.
+- Criado `docs/GRAFO_EXPLICACAO.txt` (a pedido) com a explicação em texto puro
+  do funcionamento do grafo: vértice, aresta, peso (usuários distintos com o
+  par), vizinho, grau, menor caminho (BFS) e componente conexo.
+- **Fix de condição de corrida no provisionamento JIT (Google):** o front
+  disparava requests simultâneos (ex.: `/auth/me` + `/graph` no login) e duas
+  threads passavam pelo `findByEmail` antes de qualquer commit; ambas tentavam
+  INSERT e uma violava o unique de `email` em `tb_users`
+  (`DataIntegrityViolationException` 500, estourando no `GoogleUserSyncFilter`,
+  fora do alcance do `GlobalExceptionHandler`). Correção em
+  `GoogleUserService.provision`: sem `@Transactional` no método público; a
+  lógica roda via `TransactionTemplate` e, em caso de
+  `DataIntegrityViolationException`, repete a busca/insert em transação NOVA
+  (quem perde a corrida acha a linha de quem ganhou). Teste novo
+  `GoogleUserServiceConcurrencyTest` (8 threads simultâneas no mesmo email,
+  sem duplicar/falhar). Suíte: 21 testes passando.
 - Corrigidas divergências entre o código e este contexto (análise do projeto):
   - `UserController` documentado no Swagger (`@Tag`, `@Operation`, `@ApiResponse`
     em todos os endpoints). A pendência de documentação de `AuthController` já
@@ -529,6 +607,9 @@ Pendente:
    **Concluído em 2026-11-09:** todos os controllers (`AuthController`, `UserController`,
    `FavoriteController`) documentados com `@Tag`, `@Operation` e `@ApiResponse`.
 6. Avaliar Flyway/Liquibase e remover `ddl-auto=update` antes de produção.
-7. Implementar cache Redis de favoritos/usuário (quando fizer sentido).
-8. Implementar o grafo global de ativos por coocorrência de favoritos (Ideia 1),
-   conforme `docs/GRAPH_PROMPT.md` (endpoints `/graph`, BFS, componentes e testes).
+7. Implementar cache Redis de favoritos/usuário (quando fizer sentido); incluir o grafo
+   (`/graph/**`) como candidato ao cache, já que hoje é recalculado a cada request.
+8. ~~Implementar o grafo global de ativos por coocorrência de favoritos (Ideia 1),
+    conforme `docs/GRAPH_PROMPT.md` (endpoints `/graph`, BFS, componentes e testes).~~
+    **Concluído em 2026-11-09:** endpoints `/graph`, `/graph/assets/{type}/{symbol}/neighbors`,
+    `/graph/path` e `/graph/components` implementados e testados (20 testes passando).

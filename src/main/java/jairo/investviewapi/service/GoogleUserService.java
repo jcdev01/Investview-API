@@ -8,25 +8,36 @@ import java.util.Collections;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 @Service
 public class GoogleUserService {
 
     private final UserRepository userRepository;
+    private final TransactionTemplate transactionTemplate;
     private final Set<String> adminEmails;
 
     public GoogleUserService(
             UserRepository userRepository,
+            TransactionTemplate transactionTemplate,
             @Value("${app.security.admin-emails:}") String adminEmailsProperty) {
         this.userRepository = userRepository;
+        this.transactionTemplate = transactionTemplate;
         this.adminEmails = parseAdminEmails(adminEmailsProperty);
     }
 
-    @Transactional
     public User provision(String email, String name, String googleSub) {
+        try {
+            return transactionTemplate.execute(status -> provisionInTransaction(email, name, googleSub));
+        } catch (DataIntegrityViolationException ex) {
+            return transactionTemplate.execute(status -> provisionInTransaction(email, name, googleSub));
+        }
+    }
+
+    private User provisionInTransaction(String email, String name, String googleSub) {
         Role targetRole = adminEmails.contains(email.toLowerCase()) ? Role.ADMIN : Role.USER;
 
         User user = userRepository.findByEmail(email)
