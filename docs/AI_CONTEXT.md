@@ -73,7 +73,9 @@ Variáveis esperadas (obrigatórias; sem defaults embutidos):
 | `APP_SECURITY_PASSWORD` | senha do login de dev                            |
 | `APP_SECURITY_ADMIN_EMAILS` | emails de admins separados por vírgula        |
 | `SPRING_PROFILES_ACTIVE`| profile ativo (`test` por padrão)                |
-| `GOOGLE_CLIENT_ID`      | client ID do OAuth2/Google (audience do token)   |
+| `APP_OAUTH_GOOGLE_CLIENT_ID` | client ID do OAuth2/Google (audience do token)   |
+| `APP_OAUTH_GOOGLE_ISSUER`    | issuer do JWT (`https://accounts.google.com`)    |
+| `APP_OAUTH_GOOGLE_JWK_SET_URI` | JWK Set URI do Google (`https://www.googleapis.com/oauth2/v3/certs`) |
 | `APP_CORS_ALLOWED_ORIGINS` | origens permitidas no CORS (separadas por vírgula) |
 
 O Docker Compose carrega `.env` automaticamente. O Spring Boot lê o `.env` via
@@ -137,6 +139,8 @@ src/test/java/jairo/investviewapi/
 └── graph/
     └── GraphControllerTest.java       -> testes do grafo (nós/arestas/pesos, vizinhos, BFS, componentes, 400/404/401)
 docker-compose.yml                  -> PostgreSQL + Redis
+Dockerfile                          -> build multi-stage da API (só a app; banco/Redis externos via env)
+.dockerignore                       -> exclui .env/target/docs do contexto de build
 README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
@@ -144,6 +148,10 @@ docs/ONBOARDING.md                  -> resumo para novo colaborador
 docs/GRAPH_PROMPT.md                -> prompt/especificação do grafo de ativos (Ideia 1)
 docs/GRAPH_VIEW_PROMPT.md           -> prompt p/ outra IA criar front visual de testes do grafo
 docs/GRAFO_EXPLICACAO.txt           -> explicação em texto puro dos conceitos (vértice, aresta, peso, vizinho, grau, caminho, componente)
+docs/REQUISITOS.md                  -> requisitos funcionais, não funcionais e de domínio (RF/RNF/RD) consolidados
+docs/USER_STORIES.md                -> requisitos funcionais como estórias de usuário (US01-13) com critérios de aceite e rastreabilidade
+docs/BDD.md                          -> user stories transformadas em cenários BDD/Gherkin (Dado/Quando/Então) com rastreabilidade
+docs/PLANILHA_DE_TESTES.md           -> planilha de teste estruturada (48 casos, TC-001..TC-048) por módulo, pronta p/ converter em Excel/Sheets
 ```
 
 ## Estado atual
@@ -316,7 +324,7 @@ Pendente:
   JWT (o front faz login no Google e envia `Authorization: Bearer <id_token>`).
   A API não usa sessão/cookie em produção (`SessionCreationPolicy.STATELESS`).
   `JwtDecoder` usa `jwk-set-uri` do Google (sem chamada de rede no startup) e valida
-  issuer (`https://accounts.google.com`) + audience (`GOOGLE_CLIENT_ID`) + timestamp.
+  issuer (`https://accounts.google.com`) + audience (`APP_OAUTH_GOOGLE_CLIENT_ID`) + timestamp.
   A dependência `spring-boot-starter-security-oauth2-client` foi trocada por
   `spring-boot-starter-security-oauth2-resource-server`.
 - **Provisionamento JIT do usuário:** `GoogleUserSyncFilter` roda após o
@@ -388,6 +396,62 @@ Pendente:
   por isso foi criada a `SecurityConfig` com credenciais fixas de dev.
 
 ## Histórico de conversas
+
+### 2026-11-10
+- Criado (a pedido) `docs/REQUISITOS.md` consolidando os principais requisitos
+  do projeto: 17 funcionais (auth Google/JIT, `/auth/me`, CRUD admin de
+  `/users`, favoritos com 409/404, grafo completo), 16 não funcionais
+  (segurança stateless/RBAC/IDOR, segredos em `.env`, sem N+1, camadas,
+  profiles test/prod, Docker, testes) e 12 de domínio (enum `AssetType`,
+  identidade `(type, symbol)`, normalização de symbol, peso = usuários
+  distintos, BFS não ponderado, anonimato no grafo, papéis USER/ADMIN).
+  Requisitos derivados do código/décisões existentes; seção de pendências
+  relacionadas (cache Redis, Flyway, testes) incluída ao final.
+- Criado (a pedido) `docs/USER_STORIES.md` com os principais requisitos
+  funcionais reescritos como 13 estórias de usuário (US01-13) em 5 épicos
+  (autenticação/identidade, usuários-admin, favoritos, grafo, experiência do
+  desenvolvedor), formato "Como/Quero/Para" com critérios de aceite
+  verificáveis e tabela de rastreabilidade US → RF → endpoint.
+- Criado (a pedido) `docs/PLANILHA_DE_TESTES.md`: planilha de teste em
+  markdown estruturada para conversão posterior em Excel/Sheets (tabelas por
+  aba: Auth, Users, Favorites, Security/IDOR, Graph, Docs, Resumo). 48 casos
+  (TC-001..TC-048) com colunas ID, caso, rastreabilidade (US/RF), pré-condições,
+  passos/dados, resultado esperado, prioridade, status ("Não executado") e obs.
+  Baseada nos cenários BDD; inclui massa de teste sugerida para o grafo,
+  legenda de status/prioridade e resumo executivo com contadores.
+- Criados (a pedido) `Dockerfile` e `.dockerignore` para hospedar **somente a
+  API** (o banco ficará hospedado em outro lugar): build multi-stage com
+  `maven:3.9-eclipse-temurin-25` (build) e runtime `eclipse-temurin:25-jre-alpine`
+  (usuário não-root `spring`, `EXPOSE 8080`, `JAVA_OPTS` expansível). A imagem
+  define `SPRING_PROFILES_ACTIVE=prod` como padrão (overridável com `-e`);
+  conexões com Postgres/Redis externos entram por env (`DB_URL`, `DB_USERNAME`,
+  `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `APP_OAUTH_GOOGLE_CLIENT_ID`,
+  `APP_CORS_ALLOWED_ORIGINS`, `APP_SECURITY_ADMIN_EMAILS`). O `.dockerignore`
+  garante que `.env`, `target`, `.git`, `docs` etc. não entrem na imagem.
+  Build/run a validar no Windows (Docker Desktop): `docker build -t investview-api .`
+  e `docker run -p 8080:8080 --env-file .env.docker investview-api` (com as env
+  apontando para o banco externo). Não executável no WSL (sem Docker CLI).
+- Configuração OAuth do Google movida para o ambiente (a pedido do usuário):
+  `application.properties` agora apenas referencia `APP_OAUTH_GOOGLE_ISSUER`,
+  `APP_OAUTH_GOOGLE_JWK_SET_URI` e `APP_OAUTH_GOOGLE_CLIENT_ID` — sem defaults
+  embutidos e sem os antigos nomes `GOOGLE_*` (nomes derivados das props
+  `app.oauth.google.*`, exigidos pelo serviço de hospedagem). O `.env` local foi
+  atualizado para os novos nomes (valor do client ID preservado; issuer
+  `https://accounts.google.com`; JWK Set
+  `https://www.googleapis.com/oauth2/v3/certs`; corrigida colagem acidental de
+  linha por falta de newline no final do arquivo). Env vars do hosting têm
+  precedência sobre o `application.properties`; sem `.env`/env vars a
+  aplicação falha no startup (fail fast), alinhado à convenção de "sem
+  defaults embutidos". No hosting também são obrigatórias `DB_*`,
+  `REDIS_HOST/PORT` e `APP_CORS_ALLOWED_ORIGINS` (URL do front real).
+  Validado com `cmd.exe /c mvnw.cmd test`: 21 testes passando.
+- Criado (a pedido) `docs/BDD.md` com as user stories transformadas em
+  comportamento BDD (Gherkin em português: Funcionalidade/Cenário/
+  Dado/Quando/Então): 6 funcionalidades (auth Google + JIT, CRUD admin,
+  favoritos, proteção IDOR, grafo com Contexto de dados de exemplo, dev
+  experience), ~35 cenários cobrindo caminhos felizes e erros (401/403/404/
+  409/400), rastreabilidade BDD → US → RF. Documentação apenas; nenhum teste
+  automatizado de Gherkin implementado.
 
 ### 2026-11-09
 - Implementado o grafo global de ativos por coocorrência de favoritos (Ideia 1 do
