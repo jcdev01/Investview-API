@@ -381,6 +381,10 @@ Pendente:
 
 ## Observações do ambiente
 
+- **Deploy de teste (2026-11-10):** `https://investview-api-9abc6.containers.snapdeploy.app`
+  (snapdeploy), rodando com `SPRING_PROFILES_ACTIVE=test` (smoke test). H2 console em
+  `/h2-console/` (exige `spring.h2.console.settings.web-allow-others=true` para acesso
+  remoto, adicionado em 2026-11-10). JDBC `jdbc:h2:mem:investview`, usuário `sa`, senha vazia.
 - O desenvolvimento/execução acontece no **Windows (IntelliJ IDEA)**, com o
   projeto em `C:\Users\Jairo\IdeaProjects\Investview-API` refletido no WSL em
   `/mnt/c/...`.
@@ -398,6 +402,54 @@ Pendente:
 ## Histórico de conversas
 
 ### 2026-11-10
+- Orientado deploy no hosting: usuário havia subido com `SPRING_PROFILES_ACTIVE=test`
+  (riscos: H2 volátil perdendo dados em restart, H2 console público, login dev
+  form+Basic exigindo `APP_SECURITY_*`, CORS default localhost). Recomendado
+  `prod` (ou apagar a variável para usar o default da imagem), `DB_*` no Postgres
+  externo, `REDIS_*`, `APP_CORS_ALLOWED_ORIGINS` com a URL real do front e remoção
+  das `APP_SECURITY_*` do painel. Esclarecido depois que o deploy em `test` é
+  intencional (smoke test do hosting): aceito como uso legítimo, com ressalvas
+  (dados voláteis por restart, H2 console público, CORS default cobre
+  localhost:5173/3000 para testar do front local).
+- Erro "Failed to fetch" no front (GET /auth/me) diagnosticado: backend local
+  fora do ar (nada na 8080) e o front apontava para `localhost:8080` em vez da
+  URL do hosting. Resolvido pelo usuário ao corrigir a URL base do front para
+  o provedor. Lição para o front de testes: URL da API deve ser configurável
+  (local vs deploy).
+- Análise do projeto x contexto (a pedido): código e contexto batem em quase tudo
+  (camadas, auth Google/JIT, RBAC, IDOR, favoritos, grafo, 21 testes). Divergências
+  encontradas:
+  - **Docs referenciados não existem no repositório:** a estrutura deste arquivo
+    lista `docs/REQUISITOS.md`, `USER_STORIES.md`, `BDD.md`, `PLANILHA_DE_TESTES.md`,
+    `GRAPH_PROMPT.md`, `GRAPH_VIEW_PROMPT.md` e `GRAFO_EXPLICACAO.txt`, mas `docs/`
+    contém apenas `AI_CONTEXT.md` e `ONBOARDING.md` (nunca foram commitados ou se
+    perderam). Precisa recriar ou remover as referências.
+  - **CORS:** este arquivo ainda diz default `localhost:3000/5173`, porém
+    `app.cors.allowed-origins=${APP_CORS_ALLOWED_ORIGINS:}` está sem default
+    (lista vazia se a env faltar).
+  - **Profile default:** este arquivo diz `test` por padrão, mas
+    `spring.profiles.active=${SPRING_PROFILES_ACTIVE}` está sem default (falha no
+    startup sem a env; a imagem Docker define `prod`).
+  - **`.env.example`:** uma decisão diz que ele é versionado, mas outra registra
+    sua remoção do Git (hoje ele não existe). Texto precisa ser unificado.
+  - `requireAdmin()` em `CurrentUserProvider` está sem uso; Swagger é público
+    também no profile `prod` (avaliar se é intencional).
+  - WSL segue sem Java/Maven/Docker, então não foi possível rodar `./mvnw test`
+    nesta análise (só leitura de código/contagem: 21 `@Test`).
+- Diagnóstico "Failed to fetch" no front (`GET /auth/me`) no deploy:
+  `https://investview-api-9abc6.containers.snapdeploy.app`. Backend está no ar
+  (`/auth/me` sem token → 401; `/v3/api-docs` → 200), porém QUALQUER `Origin`
+  (localhost:5173, localhost:3000, example.com) recebe **403 "Invalid CORS request"**
+  sem `Access-Control-Allow-Origin`. Causa: `APP_CORS_ALLOWED_ORIGINS` vazio/ausente
+  no painel do provedor (o default no código é vazio). Correção: definir
+  `APP_CORS_ALLOWED_ORIGINS` com a(s) origem(ns) do front (ex.:
+  `http://localhost:5173`) e reiniciar/redeploy; depois validar com
+  `curl -H "Origin: ..."`.
+- Informada a URL do provedor de deploy: `https://investview-api-9abc6.containers.snapdeploy.app`.
+  Ao tentar acessar `/h2-console/`, o H2 respondeu "Sorry, remote connections
+  ('webAllowOthers') are disabled on this server." (HTTP 200). Corrigido adicionando
+  `spring.h2.console.settings.web-allow-others=true` em `application-test.properties`
+  (só profile test, deploy de smoke test). Requer rebuild/redeploy da imagem para valer.
 - Criado (a pedido) `docs/REQUISITOS.md` consolidando os principais requisitos
   do projeto: 17 funcionais (auth Google/JIT, `/auth/me`, CRUD admin de
   `/users`, favoritos com 409/404, grafo completo), 16 não funcionais
