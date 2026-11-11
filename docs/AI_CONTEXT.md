@@ -73,7 +73,9 @@ Variáveis esperadas (obrigatórias; sem defaults embutidos):
 | `APP_SECURITY_PASSWORD` | senha do login de dev                            |
 | `APP_SECURITY_ADMIN_EMAILS` | emails de admins separados por vírgula        |
 | `SPRING_PROFILES_ACTIVE`| profile ativo (`test` por padrão)                |
-| `GOOGLE_CLIENT_ID`      | client ID do OAuth2/Google (audience do token)   |
+| `APP_OAUTH_GOOGLE_CLIENT_ID` | client ID do OAuth2/Google (audience do token)   |
+| `APP_OAUTH_GOOGLE_ISSUER`    | issuer do JWT (`https://accounts.google.com`)    |
+| `APP_OAUTH_GOOGLE_JWK_SET_URI` | JWK Set URI do Google (`https://www.googleapis.com/oauth2/v3/certs`) |
 | `APP_CORS_ALLOWED_ORIGINS` | origens permitidas no CORS (separadas por vírgula) |
 
 O Docker Compose carrega `.env` automaticamente. O Spring Boot lê o `.env` via
@@ -137,6 +139,8 @@ src/test/java/jairo/investviewapi/
 └── graph/
     └── GraphControllerTest.java       -> testes do grafo (nós/arestas/pesos, vizinhos, BFS, componentes, 400/404/401)
 docker-compose.yml                  -> PostgreSQL + Redis
+Dockerfile                          -> build multi-stage da API (só a app; banco/Redis externos via env)
+.dockerignore                       -> exclui .env/target/docs do contexto de build
 README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
@@ -144,6 +148,10 @@ docs/ONBOARDING.md                  -> resumo para novo colaborador
 docs/GRAPH_PROMPT.md                -> prompt/especificação do grafo de ativos (Ideia 1)
 docs/GRAPH_VIEW_PROMPT.md           -> prompt p/ outra IA criar front visual de testes do grafo
 docs/GRAFO_EXPLICACAO.txt           -> explicação em texto puro dos conceitos (vértice, aresta, peso, vizinho, grau, caminho, componente)
+docs/REQUISITOS.md                  -> requisitos funcionais, não funcionais e de domínio (RF/RNF/RD) consolidados
+docs/USER_STORIES.md                -> requisitos funcionais como estórias de usuário (US01-13) com critérios de aceite e rastreabilidade
+docs/BDD.md                          -> user stories transformadas em cenários BDD/Gherkin (Dado/Quando/Então) com rastreabilidade
+docs/PLANILHA_DE_TESTES.md           -> planilha de teste estruturada (48 casos, TC-001..TC-048) por módulo, pronta p/ converter em Excel/Sheets
 ```
 
 ## Estado atual
@@ -316,7 +324,7 @@ Pendente:
   JWT (o front faz login no Google e envia `Authorization: Bearer <id_token>`).
   A API não usa sessão/cookie em produção (`SessionCreationPolicy.STATELESS`).
   `JwtDecoder` usa `jwk-set-uri` do Google (sem chamada de rede no startup) e valida
-  issuer (`https://accounts.google.com`) + audience (`GOOGLE_CLIENT_ID`) + timestamp.
+  issuer (`https://accounts.google.com`) + audience (`APP_OAUTH_GOOGLE_CLIENT_ID`) + timestamp.
   A dependência `spring-boot-starter-security-oauth2-client` foi trocada por
   `spring-boot-starter-security-oauth2-resource-server`.
 - **Provisionamento JIT do usuário:** `GoogleUserSyncFilter` roda após o
@@ -373,6 +381,10 @@ Pendente:
 
 ## Observações do ambiente
 
+- **Deploy de teste (2026-11-10):** `https://investview-api-9abc6.containers.snapdeploy.app`
+  (snapdeploy), rodando com `SPRING_PROFILES_ACTIVE=test` (smoke test). H2 console em
+  `/h2-console/` (exige `spring.h2.console.settings.web-allow-others=true` para acesso
+  remoto, adicionado em 2026-11-10). JDBC `jdbc:h2:mem:investview`, usuário `sa`, senha vazia.
 - O desenvolvimento/execução acontece no **Windows (IntelliJ IDEA)**, com o
   projeto em `C:\Users\Jairo\IdeaProjects\Investview-API` refletido no WSL em
   `/mnt/c/...`.
@@ -388,6 +400,124 @@ Pendente:
   por isso foi criada a `SecurityConfig` com credenciais fixas de dev.
 
 ## Histórico de conversas
+
+### 2026-11-10
+- Orientado deploy no hosting: usuário havia subido com `SPRING_PROFILES_ACTIVE=test`
+  (riscos: H2 volátil perdendo dados em restart, H2 console público, login dev
+  form+Basic exigindo `APP_SECURITY_*`, CORS default localhost). Recomendado
+  `prod` (ou apagar a variável para usar o default da imagem), `DB_*` no Postgres
+  externo, `REDIS_*`, `APP_CORS_ALLOWED_ORIGINS` com a URL real do front e remoção
+  das `APP_SECURITY_*` do painel. Esclarecido depois que o deploy em `test` é
+  intencional (smoke test do hosting): aceito como uso legítimo, com ressalvas
+  (dados voláteis por restart, H2 console público, CORS default cobre
+  localhost:5173/3000 para testar do front local).
+- Erro "Failed to fetch" no front (GET /auth/me) diagnosticado: backend local
+  fora do ar (nada na 8080) e o front apontava para `localhost:8080` em vez da
+  URL do hosting. Resolvido pelo usuário ao corrigir a URL base do front para
+  o provedor. Lição para o front de testes: URL da API deve ser configurável
+  (local vs deploy).
+- Análise do projeto x contexto (a pedido): código e contexto batem em quase tudo
+  (camadas, auth Google/JIT, RBAC, IDOR, favoritos, grafo, 21 testes). Divergências
+  encontradas:
+  - **Docs referenciados não existem no repositório:** a estrutura deste arquivo
+    lista `docs/REQUISITOS.md`, `USER_STORIES.md`, `BDD.md`, `PLANILHA_DE_TESTES.md`,
+    `GRAPH_PROMPT.md`, `GRAPH_VIEW_PROMPT.md` e `GRAFO_EXPLICACAO.txt`, mas `docs/`
+    contém apenas `AI_CONTEXT.md` e `ONBOARDING.md` (nunca foram commitados ou se
+    perderam). Precisa recriar ou remover as referências.
+  - **CORS:** este arquivo ainda diz default `localhost:3000/5173`, porém
+    `app.cors.allowed-origins=${APP_CORS_ALLOWED_ORIGINS:}` está sem default
+    (lista vazia se a env faltar).
+  - **Profile default:** este arquivo diz `test` por padrão, mas
+    `spring.profiles.active=${SPRING_PROFILES_ACTIVE}` está sem default (falha no
+    startup sem a env; a imagem Docker define `prod`).
+  - **`.env.example`:** uma decisão diz que ele é versionado, mas outra registra
+    sua remoção do Git (hoje ele não existe). Texto precisa ser unificado.
+  - `requireAdmin()` em `CurrentUserProvider` está sem uso; Swagger é público
+    também no profile `prod` (avaliar se é intencional).
+  - WSL segue sem Java/Maven/Docker, então não foi possível rodar `./mvnw test`
+    nesta análise (só leitura de código/contagem: 21 `@Test`).
+- Diagnóstico "Failed to fetch" no front (`GET /auth/me`) no deploy:
+  `https://investview-api-9abc6.containers.snapdeploy.app`. Backend está no ar
+  (`/auth/me` sem token → 401; `/v3/api-docs` → 200), porém QUALQUER `Origin`
+  (localhost:5173, localhost:3000, example.com) recebe **403 "Invalid CORS request"**
+  sem `Access-Control-Allow-Origin`. Causa: `APP_CORS_ALLOWED_ORIGINS` vazio/ausente
+  no painel do provedor (o default no código é vazio). Correção: definir
+  `APP_CORS_ALLOWED_ORIGINS` com a(s) origem(ns) do front (ex.:
+  `http://localhost:5173`) e reiniciar/redeploy; depois validar com
+  `curl -H "Origin: ..."`.
+- H2 console no deploy: `GET /h2-console/` abre (200), mas o login (`POST
+  /h2-console/login.do`) retorna **403 "Invalid CORS request"**. Causa: o browser
+  envia `Origin: https://investview-api-9abc6.containers.snapdeploy.app` no POST e
+  essa origem não está em `APP_CORS_ALLOWED_ORIGINS` (não tem a ver com o
+  `jsessionid`/URL mudar). Validado: POST sem `Origin` → 200; POST com `Origin` do
+  deploy → 403. **Decisão do usuário:** isentar o H2 do CORS em vez de adicionar a
+  URL da API à lista. Implementado em `SecurityConfig`: registro dedicado de
+  `/h2-console/**` no `CorsConfigurationSource` com origens/métodos/headers
+  permissivos (`allowedOriginPatterns=*`, `allowCredentials=false`), mantendo o
+  `/**` restrito a `APP_CORS_ALLOWED_ORIGINS`. Requer redeploy para valer; WSL sem
+  Java, então não compilado/testado aqui.
+- Informada a URL do provedor de deploy: `https://investview-api-9abc6.containers.snapdeploy.app`.
+  Ao tentar acessar `/h2-console/`, o H2 respondeu "Sorry, remote connections
+  ('webAllowOthers') are disabled on this server." (HTTP 200). Corrigido adicionando
+  `spring.h2.console.settings.web-allow-others=true` em `application-test.properties`
+  (só profile test, deploy de smoke test). Requer rebuild/redeploy da imagem para valer.
+- Criado (a pedido) `docs/REQUISITOS.md` consolidando os principais requisitos
+  do projeto: 17 funcionais (auth Google/JIT, `/auth/me`, CRUD admin de
+  `/users`, favoritos com 409/404, grafo completo), 16 não funcionais
+  (segurança stateless/RBAC/IDOR, segredos em `.env`, sem N+1, camadas,
+  profiles test/prod, Docker, testes) e 12 de domínio (enum `AssetType`,
+  identidade `(type, symbol)`, normalização de symbol, peso = usuários
+  distintos, BFS não ponderado, anonimato no grafo, papéis USER/ADMIN).
+  Requisitos derivados do código/décisões existentes; seção de pendências
+  relacionadas (cache Redis, Flyway, testes) incluída ao final.
+- Criado (a pedido) `docs/USER_STORIES.md` com os principais requisitos
+  funcionais reescritos como 13 estórias de usuário (US01-13) em 5 épicos
+  (autenticação/identidade, usuários-admin, favoritos, grafo, experiência do
+  desenvolvedor), formato "Como/Quero/Para" com critérios de aceite
+  verificáveis e tabela de rastreabilidade US → RF → endpoint.
+- Criado (a pedido) `docs/PLANILHA_DE_TESTES.md`: planilha de teste em
+  markdown estruturada para conversão posterior em Excel/Sheets (tabelas por
+  aba: Auth, Users, Favorites, Security/IDOR, Graph, Docs, Resumo). 48 casos
+  (TC-001..TC-048) com colunas ID, caso, rastreabilidade (US/RF), pré-condições,
+  passos/dados, resultado esperado, prioridade, status ("Não executado") e obs.
+  Baseada nos cenários BDD; inclui massa de teste sugerida para o grafo,
+  legenda de status/prioridade e resumo executivo com contadores.
+- Criados (a pedido) `Dockerfile` e `.dockerignore` para hospedar **somente a
+  API** (o banco ficará hospedado em outro lugar): build multi-stage com
+  `maven:3.9-eclipse-temurin-25` (build) e runtime `eclipse-temurin:25-jre-alpine`
+  (usuário não-root `spring`, `EXPOSE 8080`, `JAVA_OPTS` opcional em runtime).
+  A imagem define `SPRING_PROFILES_ACTIVE=prod` como padrão (overridável com
+  `-e`); `JAVA_OPTS` não é declarado como `ENV` para o serviço de hospedagem
+  não exigi-lo — se informado no painel/`docker run -e`, o ENTRYPOINT o aplica
+  (ex.: `-XX:MaxRAMPercentage=75.0`). Conexões
+  com Postgres/Redis externos entram por env (`DB_URL`, `DB_USERNAME`,
+  `DB_PASSWORD`, `REDIS_HOST`, `REDIS_PORT`, `APP_OAUTH_GOOGLE_CLIENT_ID`,
+  `APP_CORS_ALLOWED_ORIGINS`, `APP_SECURITY_ADMIN_EMAILS`). O `.dockerignore`
+  garante que `.env`, `target`, `.git`, `docs` etc. não entrem na imagem.
+  Build/run a validar no Windows (Docker Desktop): `docker build -t investview-api .`
+  e `docker run -p 8080:8080 --env-file .env.docker investview-api` (com as env
+  apontando para o banco externo). Não executável no WSL (sem Docker CLI).
+- Configuração OAuth do Google movida para o ambiente (a pedido do usuário):
+  `application.properties` agora apenas referencia `APP_OAUTH_GOOGLE_ISSUER`,
+  `APP_OAUTH_GOOGLE_JWK_SET_URI` e `APP_OAUTH_GOOGLE_CLIENT_ID` — sem defaults
+  embutidos e sem os antigos nomes `GOOGLE_*` (nomes derivados das props
+  `app.oauth.google.*`, exigidos pelo serviço de hospedagem). O `.env` local foi
+  atualizado para os novos nomes (valor do client ID preservado; issuer
+  `https://accounts.google.com`; JWK Set
+  `https://www.googleapis.com/oauth2/v3/certs`; corrigida colagem acidental de
+  linha por falta de newline no final do arquivo). Env vars do hosting têm
+  precedência sobre o `application.properties`; sem `.env`/env vars a
+  aplicação falha no startup (fail fast), alinhado à convenção de "sem
+  defaults embutidos". No hosting também são obrigatórias `DB_*`,
+  `REDIS_HOST/PORT` e `APP_CORS_ALLOWED_ORIGINS` (URL do front real).
+  Validado com `cmd.exe /c mvnw.cmd test`: 21 testes passando.
+- Criado (a pedido) `docs/BDD.md` com as user stories transformadas em
+  comportamento BDD (Gherkin em português: Funcionalidade/Cenário/
+  Dado/Quando/Então): 6 funcionalidades (auth Google + JIT, CRUD admin,
+  favoritos, proteção IDOR, grafo com Contexto de dados de exemplo, dev
+  experience), ~35 cenários cobrindo caminhos felizes e erros (401/403/404/
+  409/400), rastreabilidade BDD → US → RF. Documentação apenas; nenhum teste
+  automatizado de Gherkin implementado.
 
 ### 2026-11-09
 - Implementado o grafo global de ativos por coocorrência de favoritos (Ideia 1 do
