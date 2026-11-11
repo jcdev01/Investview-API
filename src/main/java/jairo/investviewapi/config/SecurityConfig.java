@@ -62,7 +62,17 @@ public class SecurityConfig {
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/h2-console/**", h2ConsoleCorsConfiguration());
         source.registerCorsConfiguration("/**", configuration);
         return source;
+    }
+
+    private static CorsConfiguration h2ConsoleCorsConfiguration() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOriginPatterns(List.of("*"));
+        configuration.setAllowedMethods(List.of("*"));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowCredentials(false);
+        return configuration;
     }
 }

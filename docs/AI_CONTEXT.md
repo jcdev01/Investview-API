@@ -445,6 +445,17 @@ Pendente:
   `APP_CORS_ALLOWED_ORIGINS` com a(s) origem(ns) do front (ex.:
   `http://localhost:5173`) e reiniciar/redeploy; depois validar com
   `curl -H "Origin: ..."`.
+- H2 console no deploy: `GET /h2-console/` abre (200), mas o login (`POST
+  /h2-console/login.do`) retorna **403 "Invalid CORS request"**. Causa: o browser
+  envia `Origin: https://investview-api-9abc6.containers.snapdeploy.app` no POST e
+  essa origem não está em `APP_CORS_ALLOWED_ORIGINS` (não tem a ver com o
+  `jsessionid`/URL mudar). Validado: POST sem `Origin` → 200; POST com `Origin` do
+  deploy → 403. **Decisão do usuário:** isentar o H2 do CORS em vez de adicionar a
+  URL da API à lista. Implementado em `SecurityConfig`: registro dedicado de
+  `/h2-console/**` no `CorsConfigurationSource` com origens/métodos/headers
+  permissivos (`allowedOriginPatterns=*`, `allowCredentials=false`), mantendo o
+  `/**` restrito a `APP_CORS_ALLOWED_ORIGINS`. Requer redeploy para valer; WSL sem
+  Java, então não compilado/testado aqui.
 - Informada a URL do provedor de deploy: `https://investview-api-9abc6.containers.snapdeploy.app`.
   Ao tentar acessar `/h2-console/`, o H2 respondeu "Sorry, remote connections
   ('webAllowOthers') are disabled on this server." (HTTP 200). Corrigido adicionando
