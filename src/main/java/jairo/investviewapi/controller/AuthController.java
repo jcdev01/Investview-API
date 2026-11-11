@@ -1,34 +1,50 @@
 package jairo.investviewapi.controller;
 
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.responses.ApiResponse;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jairo.investviewapi.dto.LoginRequest;
+import jairo.investviewapi.dto.PasswordResetRequest;
 import jairo.investviewapi.dto.UserResponse;
 import jairo.investviewapi.entity.User;
 import jairo.investviewapi.service.GoogleUserService;
+import jairo.investviewapi.service.UserService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-@Tag(name = "Autenticação", description = "Dados do usuário autenticado via Google")
+@Tag(name = "Autenticação", description = "Gerenciamento de login local (e-mail/senha) e Google OAuth2")
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
 public class AuthController {
 
+    private final AuthenticationManager authenticationManager;
+    private final UserService userService;
     private final GoogleUserService googleUserService;
 
+    @Operation(summary = "Realiza o login com e-mail e senha tradicionais")
+    @PostMapping("/login")
+    public ResponseEntity<String> login(@RequestBody @Valid LoginRequest request) {
+        authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.email(), request.password())
+        );
+        return ResponseEntity.ok("Login local efetuado com sucesso!");
+    }
+
+    @Operation(summary = "Recupera/altera a senha informando o e-mail cadastrado")
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@RequestBody @Valid PasswordResetRequest request) {
+        userService.resetPassword(request);
+        return ResponseEntity.noContent().build();
+    }
+
+
     @Operation(summary = "Retorna o usuário autenticado a partir do token do Google")
-    @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "Usuário autenticado retornado com sucesso"),
-            @ApiResponse(responseCode = "400", description = "Token sem email verificado"),
-            @ApiResponse(responseCode = "401", description = "Token ausente ou inválido")
-    })
     @GetMapping("/me")
     public ResponseEntity<UserResponse> me(@AuthenticationPrincipal Jwt jwt) {
         if (jwt == null) {
@@ -37,11 +53,14 @@ public class AuthController {
         String email = jwt.getClaimAsString("email");
         Object emailVerifiedClaim = jwt.getClaim("email_verified");
         boolean emailVerified = emailVerifiedClaim instanceof Boolean value && value;
+
         if (email == null || !emailVerified) {
             throw new IllegalArgumentException("Token do Google sem email verificado");
         }
+
         User user = googleUserService.provision(
                 email, jwt.getClaimAsString("name"), jwt.getSubject());
+
         return ResponseEntity.ok(UserResponse.from(user));
     }
 }
