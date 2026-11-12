@@ -96,23 +96,30 @@ src/main/java/jairo/investviewapi/
 │   ├── AuthController.java         -> /auth/me (usuário autenticado via Google)
 │   ├── UserController.java         -> CRUD REST de usuário (/users)
 │   ├── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
+│   ├── PortfolioController.java    -> carteira do usuário (/users/{userId}/portfolio)
 │   └── GraphController.java        -> endpoints /graph (Swagger documentado)
 ├── dto/
 │   ├── UserCreateRequest.java      -> record de entrada (create) + validação
 │   ├── UserUpdateRequest.java      -> record de entrada (update) + validação
 │   ├── UserResponse.java           -> record de saída (sem senha)
-│   ├── FavoriteRequest.java        -> record de entrada (symbol, type, name) + validação
-│   ├── FavoriteResponse.java       -> record de saída (id, symbol, type, name)
-│   ├── GraphNode.java              -> nó do grafo (id "TYPE:SYMBOL", symbol, type, name)
+│   ├── FavoriteRequest.java        -> record de entrada (symbol, name) + validação
+│   ├── FavoriteResponse.java       -> record de saída (id, symbol, name)
+│   ├── GraphNode.java              -> nó do grafo (id = symbol, symbol, name)
 │   ├── GraphEdge.java              -> aresta (source, target, weight)
 │   ├── GraphResponse.java          -> { nodes, edges } do GET /graph
-│   ├── NeighborResponse.java       -> vizinho com peso (id, symbol, type, name, weight)
-│   └── PathResponse.java           -> resultado do BFS (found, path, length)
+│   ├── NeighborResponse.java       -> vizinho com peso (id, symbol, name, weight)
+│   ├── PathResponse.java           -> resultado do BFS (found, path, length)
+│   ├── PortfolioResponse.java      -> carteira (id, name, items)
+│   ├── PortfolioItemResponse.java  -> cota (id, symbol, name, quantity)
+│   ├── PortfolioRenameRequest.java -> record de entrada (name) + validação
+│   ├── PortfolioItemRequest.java   -> record de entrada (symbol, name, quantity) + validação
+│   └── PortfolioItemUpdateRequest.java -> record de entrada (quantity, name) + validação
 ├── entity/
 │   ├── User.java                   -> entidade JPA de usuário (1:N favorites, role USER/ADMIN)
 │   ├── Role.java                   -> enum de perfis de acesso (USER, ADMIN)
-│   ├── AssetType.java              -> enum (STOCK, FII, ETF, CRYPTO)
-│   └── Favorite.java               -> favorito do usuário (user, symbol, type, name)
+│   ├── Favorite.java               -> favorito do usuário (user, symbol, name)
+│   ├── Portfolio.java              -> carteira do usuário (1:1 com User, 1:N items)
+│   └── PortfolioItem.java          -> cota da carteira (symbol, name, quantity)
 ├── exception/
 │   ├── ResourceNotFoundException.java -> recurso não encontrado (404)
 │   ├── ConflictException.java      -> conflito de duplicidade (409)
@@ -121,7 +128,9 @@ src/main/java/jairo/investviewapi/
 ├── repository/
 │   ├── UserRepository.java         -> JpaRepository<User, Long>
 │   ├── FavoriteRepository.java     -> JpaRepository<Favorite, Long> + findAllWithUserId (projeção)
-│   └── FavoriteView.java          -> projeção (userId, type, symbol, name) para montar o grafo
+│   ├── FavoriteView.java           -> projeção (userId, symbol, name) para montar o grafo
+│   ├── PortfolioRepository.java    -> JpaRepository<Portfolio, Long> + findByUserId
+│   └── PortfolioItemRepository.java -> JpaRepository<PortfolioItem, Long> + consultas por carteira/usuário
 ├── graph/
 │   ├── Graph.java                  -> interface (addNode, addEdge, neighbors, edges, weight, shortestPath, components)
 │   └── AdjacencyListGraph.java     -> implementação com Maps (BFS, DFS e EdgeKey normalizado)
@@ -129,13 +138,15 @@ src/main/java/jairo/investviewapi/
     ├── UserService.java            -> CRUD de usuário + hash de senha
     ├── GoogleUserService.java      -> provisiona/vincula usuário do Google por email
     ├── GraphService.java           -> monta o grafo a partir dos favoritos (agregados, sem expor usuários)
-    └── FavoriteService.java        -> adicionar/listar/remover favoritos
+    ├── FavoriteService.java        -> adicionar/listar/remover favoritos
+    └── PortfolioService.java       -> carteira: get/rename + adicionar/listar/atualizar/remover cotas
 src/main/resources/application.properties
 src/test/java/jairo/investviewapi/
 ├── InvestviewApiApplicationTests.java -> teste de contexto
 ├── controller/
 │   ├── AuthControllerTest.java        -> testes de login Google via MockMvc + jwt()
-│   └── OwnerAuthorizationTest.java    -> testes de IDOR e RBAC (USER vs ADMIN)
+│   ├── OwnerAuthorizationTest.java    -> testes de IDOR e RBAC (USER vs ADMIN)
+│   └── PortfolioControllerTest.java   -> testes da carteira (CRUD de cotas, upsert, 400/401/403/404)
 └── graph/
     └── GraphControllerTest.java       -> testes do grafo (nós/arestas/pesos, vizinhos, BFS, componentes, 400/404/401)
 docker-compose.yml                  -> PostgreSQL + Redis
@@ -145,6 +156,7 @@ README.md                           -> instruções gerais
 AGENTS.md                           -> convenções para agentes de IA
 docs/AI_CONTEXT.md                  -> este arquivo (memória)
 docs/ONBOARDING.md                  -> resumo para novo colaborador
+docs/FRONT_TEST_PROMPT.md           -> prompt p/ IA construir front de testes das rotas
 docs/GRAPH_PROMPT.md                -> prompt/especificação do grafo de ativos (Ideia 1)
 docs/GRAPH_VIEW_PROMPT.md           -> prompt p/ outra IA criar front visual de testes do grafo
 docs/GRAFO_EXPLICACAO.txt           -> explicação em texto puro dos conceitos (vértice, aresta, peso, vizinho, grau, caminho, componente)
@@ -178,7 +190,7 @@ Pronto:
 - [x] DTOs `record` de usuário (create/update/response) com Bean Validation
 - [x] `UserController` com CRUD REST em `/users`
 - [x] H2 em memória para dev + console em `/h2-console`
-- [x] Favoritos simplificados: `Favorite` armazena diretamente `symbol`, `type` (`STOCK, FII, ETF, CRYPTO`) e `name` (opcional), com constraint unique `(user_id, type, symbol)`. Remoção da entidade `Asset` e de `AssetRepository`.
+- [x] Favoritos simplificados: `Favorite` armazena diretamente `symbol` e `name` (opcional), com constraint unique `(user_id, symbol)`. Remoção da entidade `Asset` e de `AssetRepository`.
 - [x] `FavoriteController`/`FavoriteService`: adicionar (normalização de symbol + prevenção de duplicidade 409), listar por usuário e remover (404); Swagger documentado com `@Tag` e `@Operation`.
 - [x] Tratamento global de exceções (`GlobalExceptionHandler` + `ErrorResponse`) com respostas de erro padronizadas; email duplicado agora retorna 409 (`ConflictException`).
 - [x] `GlobalExceptionHandler` agora estende `ResponseEntityExceptionHandler`, mapeando exceções padrão do Spring MVC (400/405/406/415) em vez de caírem no 500 genérico; inclui `ConstraintViolationException` → 400.
@@ -190,7 +202,8 @@ Pronto:
 - [x] `GET /users` (listagem) mantido, porém restrito a `ADMIN` (o `UserController` inteiro é `@PreAuthorize("hasRole('ADMIN')")`); `UserService.findAll` permanece em uso.
 - [x] Swagger documentado em todos os controllers (`AuthController`, `UserController` e `FavoriteController`) com `@Tag`, `@Operation` e `@ApiResponse`.
 - [x] Favoritos: `FavoriteController` usa `requireOwnerOrAdmin`, alinhando com as security chains (que permitem `USER` e `ADMIN` em `/users/*/favorites/**`). Dono acessa os próprios favoritos; `ADMIN` pode acessar/gerenciar favoritos de qualquer usuário.
-- [x] Grafo global de ativos por coocorrência de favoritos (Ideia 1): `GET /graph` (nós/arestas/pesos), `GET /graph/assets/{type}/{symbol}/neighbors` (peso desc), `GET /graph/path?from=TYPE:SYMBOL&to=TYPE:SYMBOL` (BFS) e `GET /graph/components` (componentes conexos). Pacote `graph` (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) + projeção `FavoriteView` no `FavoriteRepository` (sem N+1). Sem mudança de schema e sem dependências novas. `GraphControllerTest` com 10 testes; suíte completa com 20 testes passando.
+- [x] Grafo global de ativos por coocorrência de favoritos (Ideia 1): `GET /graph` (nós/arestas/pesos), `GET /graph/assets/{symbol}/neighbors` (peso desc), `GET /graph/path?from=SYMBOL&to=SYMBOL` (BFS) e `GET /graph/components` (componentes conexos). Pacote `graph` (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) + projeção `FavoriteView` no `FavoriteRepository` (sem N+1). Sem mudança de schema e sem dependências novas. `GraphControllerTest` com 10 testes; suíte completa com 20 testes passando.
+- [x] Carteira do usuário (simulação): `Portfolio` 1:1 `User` (default "Minha carteira") e `PortfolioItem` (`symbol`, `name`, `quantity` `BigDecimal` 19,8) com unique `(portfolio_id, symbol)`. Endpoints `/users/{userId}/portfolio` (GET/PUT) e `/items` (GET/POST/PUT/DELETE). `POST /items` soma a quantidade quando a cota já existe; `PUT` define a quantidade absoluta. Rotas liberadas para `USER`/`ADMIN` via `requireOwnerOrAdmin`. Sem cálculo de valor/cotação no backend. `PortfolioControllerTest` com 12 testes; suíte completa com 33 testes passando.
 
 Pendente:
 
@@ -269,12 +282,12 @@ Pendente:
   `@JoinColumn(name = "user_id")`.
 - **Favoritos simplificados (sem Asset nem chamadas externas):** O backend NÃO
   chama APIs externas e NÃO armazena cotações. Guarda apenas a identidade do ativo
-  favorito (`symbol` normalizado com `trim().toUpperCase()`, `type` do enum
-  `STOCK, FII, ETF, CRYPTO` e `name` opcional para exibição). O frontend consulta as
-  cotações diretamente na brapi usando o `symbol`. A API CoinGecko foi descartada,
-  pois criptomoedas também são consultadas na brapi (`/api/v2/crypto?coin=BTC`).
-  A entidade `Asset` e o `AssetRepository` foram removidos. A tabela `tb_favorites`
-  guarda diretamente os dados do ativo com unique `(user_id, type, symbol)`.
+  favorito (`symbol` normalizado com `trim().toUpperCase()` e `name` opcional para
+  exibição). O frontend consulta as cotações diretamente na brapi usando o `symbol`.
+  A API CoinGecko foi descartada, pois criptomoedas também são consultadas na brapi
+  (`/api/v2/crypto?coin=BTC`). A entidade `Asset` e o `AssetRepository` foram
+  removidos. A tabela `tb_favorites` guarda diretamente os dados do ativo com unique
+  `(user_id, symbol)`.
   Duplicidade lança `ConflictException` (409) e exclusão/consulta inexistente lança
   `ResourceNotFoundException` (404). Endpoints em `/users/{userId}/favorites`
   estão documentados com anotações OpenAPI/Swagger.
@@ -363,24 +376,46 @@ Pendente:
   `SecurityContextHolder`. O `UserResponse` passa a exportar o campo `role`.
 - **Grafo global de ativos (Ideia 1):** grafo derivado apenas dos favoritos (backend não chama
   APIs externas; o front continua consultando cotações apenas na brapi). Nó = ativo com id
-  `"<TYPE>:<SYMBOL>"`; aresta não direcionada = dois ativos favoritados pelo mesmo usuário
+  igual ao `symbol`; aresta não direcionada = dois ativos favoritados pelo mesmo usuário
   (ordem dos ids normalizada em `EdgeKey`); peso = nº de usuários distintos do par
-  (unique `(user_id, type, symbol)` garante pares únicos por usuário). Montagem no
+  (unique `(user_id, symbol)` garante pares únicos por usuário). Montagem no
   `GraphService` via projeção `FavoriteView` (`findAllWithUserId` ordenado por user/id,
   sem N+1), agrupamento por usuário em `LinkedHashMap` (ordem determinística) e combinação
   de pares; `name` do nó = primeiro não nulo encontrado. Algoritmos em Java puro (sem libs):
   BFS com predecessores para caminho mínimo, DFS iterativo para componentes conexos.
   Endpoints em `/graph` exigem apenas autenticação (caem no `anyRequest().authenticated()`)
-  e expõem só agregados, nunca quem favoritou. Erros: `type` inválido ou `from`/`to` fora
-  do formato `TYPE:SYMBOL` → 400 (`IllegalArgumentException` ou `MethodArgumentTypeMismatch`
-  via `GlobalExceptionHandler`); ativo inexistente no grafo → 404 (`ResourceNotFoundException`)
+  e expõem só agregados, nunca quem favoritou. Erros: `from`/`to` vazio → 400
+  (`IllegalArgumentException` via `GlobalExceptionHandler`); ativo inexistente no grafo →
+  404 (`ResourceNotFoundException`)
   — escolha documentada no Swagger; sem caminho → 200 com `found=false`. Vizinhos ordenados
   por peso desc (desempate por id); componentes ordenados por tamanho desc. Pacote `graph`
   separado (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) conforme
   `docs/GRAPH_PROMPT.md`; DTOs em `dto/`. Cache no Redis é evolução futura.
+- **Carteira do usuário (simulação):** `Portfolio` 1:1 `User` (unique `user_id`,
+  criada sob demanda com nome padrão "Minha carteira") e `PortfolioItem`
+  (`symbol`, `name`, `quantity` `BigDecimal` 19,8; unique `(portfolio_id, symbol)`).
+  `POST /items` soma a quantidade quando a cota já existe (upsert), `PUT /items/{itemId}`
+  define a quantidade absoluta. Rotas `/users/*/portfolio/**`
+  liberadas para `USER` e `ADMIN` (dono ou admin) com `requireOwnerOrAdmin`,
+  alinhadas às chains. Sem cálculo de valor: o backend não busca cotações; devolve
+  apenas `symbol`, `name` e `quantity`. Deleção de usuário/carteira usa
+  `@OnDelete(CASCADE)` no FK. Testes em `PortfolioControllerTest` (12).
+- **Remoção do `AssetType` (2026-11-12):** a brapi não separa os ativos em
+  FII/STOCK/ETF/CRYPTO, então o tipo deixou de ser útil. `AssetType` foi removido e
+  a identidade do ativo passou a ser apenas o `symbol` em favoritos, carteira e
+  grafo. Rotas do grafo simplificadas para `/graph/assets/{symbol}/neighbors` e
+  `/graph/path?from=SYMBOL&to=SYMBOL`. Em bancos existentes, remover a coluna
+  `type` manualmente (o `ddl-auto=update` não dropa colunas).
 
 ## Observações do ambiente
 
+- **Migração 2026-11-12 (remoção de `type`):** em bancos já existentes, remover a
+  coluna `type` de `tb_favorites` e `tb_portfolio_items` (o Hibernate não dropa
+  colunas). Exemplo PostgreSQL: `ALTER TABLE tb_favorites DROP COLUMN type;` e
+  `ALTER TABLE tb_portfolio_items DROP COLUMN type;`; reinicie a app para o
+  Hibernate criar as constraints novas `(user_id, symbol)` e
+  `(portfolio_id, symbol)`. Se houver símbolos duplicados por usuário/carteira,
+  deduplicar antes.
 - **Deploy de teste (2026-11-10):** `https://investview-api-9abc6.containers.snapdeploy.app`
   (snapdeploy), rodando com `SPRING_PROFILES_ACTIVE=test` (smoke test). H2 console em
   `/h2-console/` (exige `spring.h2.console.settings.web-allow-others=true` para acesso
@@ -400,6 +435,53 @@ Pendente:
   por isso foi criada a `SecurityConfig` com credenciais fixas de dev.
 
 ## Histórico de conversas
+
+### 2026-11-12
+- Releitura do projeto e do contexto de IA (pom, properties test/prod, Docker,
+  segurança dev/prod, entidades, DTOs, repositórios, services, controllers,
+  pacote `graph` e testes). Confirmado: 21 `@Test`; arquitetura em camadas e
+  funcionalidades (Google OAuth2/JIT, RBAC, IDOR, favoritos, grafo) batem com
+  este contexto. Divergências conhecidas seguem: `README.md`/`ONBOARDING.md`
+  desatualizados (sem entidades/endpoints, citam OAuth2 Client e credenciais
+  padrão embutidas); `spring.profiles.active` e `APP_CORS_ALLOWED_ORIGINS` sem
+  default; `requireAdmin()` sem uso; Swagger público em `prod`; H2 exposto no
+  profile `test`. `.env` não lido em conteúdo.
+- Criado (a pedido) `docs/FRONT_TEST_PROMPT.md`: prompt completo para uma IA
+  construir uma SPA de testes (React + Vite + TS) cobrindo login Google,
+  `/auth/me`, favoritos, grafo (vizinhos, caminho e componentes), CRUD admin de
+  usuários e uma página de diagnóstico de todas as rotas. Inclui contratos,
+  regras de negócio, configuração de CORS/Google, formato de erro e checklist
+  de aceite. Nenhuma alteração no backend.
+- Implementada a entidade de carteira (a pedido): `Portfolio` 1:1 `User` +
+  `PortfolioItem` (type/symbol/name/quantity `BigDecimal`). Endpoints
+  `/users/{userId}/portfolio` (GET/PUT) e `/items` (GET/POST/PUT/DELETE);
+  `POST` soma a quantidade de uma cota existente e `PUT` define a absoluta.
+  Segurança `USER`/`ADMIN` + `requireOwnerOrAdmin`; `@OnDelete(CASCADE)` nos FKs.
+  Criado `PortfolioControllerTest` (12 testes). Suíte total: 33 testes passando
+  via `cmd.exe /c mvnw.cmd test`.
+- Criado `docs/FRONT_TEST_CARTEIRA_PROMPT.md` com um prompt curto para adicionar
+  a tela de carteira ao front de testes (contrato, UI e checklist).
+- Removido o `AssetType` (a pedido): a brapi não separa FII/STOCK/ETF/CRYPTO.
+  `Favorite` e `PortfolioItem` passaram a usar só `symbol` (unique
+  `(user_id, symbol)` e `(portfolio_id, symbol)`); DTOs, repositórios, services e
+  testes ajustados. Grafo agora usa o próprio `symbol` como id do nó, com rotas
+  `/graph/assets/{symbol}/neighbors` e `/graph/path?from=SYMBOL&to=SYMBOL`.
+  Prompts do front e contexto atualizados. Suíte: 33 testes passando.
+
+### 2026-11-11
+- Leitura completa do projeto (pom, properties, Docker, docs, todo o código-fonte
+  e os 5 arquivos de teste) para carregar o contexto. Confirmado: 21 testes
+  (`contextLoads` + 2 Auth + 7 Owner + 10 Graph + 1 concorrência). O `.env` não
+  foi lido em conteúdo (apenas os nomes das variáveis), por conter segredos.
+- Divergências observadas (docs desatualizados, sem alteração de código):
+  `README.md` e `docs/ONBOARDING.md` ainda dizem que não há entidades/endpoints
+  de negócio, citam "OAuth2 Client", credenciais padrão embutidas e testes que
+  exigem PostgreSQL — o código atual usa OAuth2 Resource Server, H2 no profile
+  `test` e já possui `User`/`Favorite`/grafo. `ONBOARDING.md` também lista
+  defaults de env que não existem mais. Pendências já conhecidas seguem:
+  `spring.profiles.active` e `APP_CORS_ALLOWED_ORIGINS` sem default,
+  `requireAdmin()` sem uso, Swagger público em `prod` e H2 console exposto no
+  profile `test`.
 
 ### 2026-11-10
 - Orientado deploy no hosting: usuário havia subido com `SPRING_PROFILES_ACTIVE=test`
@@ -743,3 +825,6 @@ Pendente:
     conforme `docs/GRAPH_PROMPT.md` (endpoints `/graph`, BFS, componentes e testes).~~
     **Concluído em 2026-11-09:** endpoints `/graph`, `/graph/assets/{type}/{symbol}/neighbors`,
     `/graph/path` e `/graph/components` implementados e testados (20 testes passando).
+9. Consumir a carteira no front de testes: seção adicionada ao
+   `docs/FRONT_TEST_PROMPT.md` e prompt curto em
+   `docs/FRONT_TEST_CARTEIRA_PROMPT.md` (2026-11-12).

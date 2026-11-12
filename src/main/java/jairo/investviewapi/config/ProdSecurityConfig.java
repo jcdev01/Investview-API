@@ -32,6 +32,7 @@ public class ProdSecurityConfig {
                                 "/v3/api-docs/**")
                         .permitAll()
                         .requestMatchers("/users/*/favorites/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers("/users/*/portfolio/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth -> oauth.jwt(Customizer.withDefaults()))

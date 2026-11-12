@@ -9,7 +9,6 @@ import java.util.stream.Collectors;
 import jairo.investviewapi.dto.GraphResponse;
 import jairo.investviewapi.dto.NeighborResponse;
 import jairo.investviewapi.dto.PathResponse;
-import jairo.investviewapi.entity.AssetType;
 import jairo.investviewapi.exception.ResourceNotFoundException;
 import jairo.investviewapi.graph.AdjacencyListGraph;
 import jairo.investviewapi.graph.Graph;
@@ -32,15 +31,14 @@ public class GraphService {
     }
 
     @Transactional(readOnly = true)
-    public List<NeighborResponse> getNeighbors(AssetType type, String symbol) {
+    public List<NeighborResponse> getNeighbors(String symbol) {
         Graph graph = buildGraph();
-        String id = assetId(type, symbol.trim().toUpperCase());
+        String id = normalizeSymbol(symbol);
         requireNode(graph, id);
         return graph.neighbors(id).stream()
                 .map(node -> new NeighborResponse(
                         node.id(),
                         node.symbol(),
-                        node.type(),
                         node.name(),
                         graph.weight(id, node.id())))
                 .sorted(Comparator.comparingInt(NeighborResponse::weight)
@@ -52,8 +50,8 @@ public class GraphService {
     @Transactional(readOnly = true)
     public PathResponse getShortestPath(String from, String to) {
         Graph graph = buildGraph();
-        String fromId = normalizeAssetId(from);
-        String toId = normalizeAssetId(to);
+        String fromId = normalizeSymbol(from);
+        String toId = normalizeSymbol(to);
         requireNode(graph, fromId);
         requireNode(graph, toId);
         return graph.shortestPath(fromId, toId)
@@ -82,8 +80,8 @@ public class GraphService {
         for (List<FavoriteView> favorites : favoritesByUser.values()) {
             List<String> assetIds = new ArrayList<>();
             for (FavoriteView favorite : favorites) {
-                String id = assetId(favorite.getType(), favorite.getSymbol());
-                graph.addNode(id, favorite.getSymbol(), favorite.getType(), favorite.getName());
+                String id = normalizeSymbol(favorite.getSymbol());
+                graph.addNode(id, id, favorite.getName());
                 assetIds.add(id);
             }
             for (int i = 0; i < assetIds.size(); i++) {
@@ -95,28 +93,11 @@ public class GraphService {
         return graph;
     }
 
-    private static String assetId(AssetType type, String symbol) {
-        return type.name() + ":" + symbol;
-    }
-
-    private static String normalizeAssetId(String id) {
-        if (id == null || id.isBlank()) {
-            throw new IllegalArgumentException("Identificador do ativo não informado, use o formato TYPE:SYMBOL");
+    private static String normalizeSymbol(String symbol) {
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("Símbolo do ativo não informado");
         }
-        String[] parts = id.trim().split(":", 2);
-        if (parts.length != 2 || parts[1].isBlank()) {
-            throw new IllegalArgumentException("Identificador do ativo inválido, use TYPE:SYMBOL: " + id);
-        }
-        AssetType type = parseType(parts[0]);
-        return assetId(type, parts[1].trim().toUpperCase());
-    }
-
-    private static AssetType parseType(String value) {
-        try {
-            return AssetType.valueOf(value.trim().toUpperCase());
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("Tipo de ativo inválido: " + value);
-        }
+        return symbol.trim().toUpperCase();
     }
 
     private static void requireNode(Graph graph, String id) {

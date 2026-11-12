@@ -8,7 +8,6 @@ import java.util.List;
 import jairo.investviewapi.dto.GraphResponse;
 import jairo.investviewapi.dto.NeighborResponse;
 import jairo.investviewapi.dto.PathResponse;
-import jairo.investviewapi.entity.AssetType;
 import jairo.investviewapi.service.GraphService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -39,21 +38,18 @@ public class GraphController {
     @Operation(summary = "Retorna os vizinhos de um ativo ordenados por peso decrescente")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Vizinhos retornados com sucesso"),
-            @ApiResponse(responseCode = "400", description = "Tipo de ativo inválido"),
             @ApiResponse(responseCode = "401", description = "Token ausente ou inválido"),
             @ApiResponse(responseCode = "404", description = "Ativo não encontrado no grafo")
     })
-    @GetMapping("/assets/{type}/{symbol}/neighbors")
-    public ResponseEntity<List<NeighborResponse>> getNeighbors(
-            @PathVariable AssetType type,
-            @PathVariable String symbol) {
-        return ResponseEntity.ok(graphService.getNeighbors(type, symbol));
+    @GetMapping("/assets/{symbol}/neighbors")
+    public ResponseEntity<List<NeighborResponse>> getNeighbors(@PathVariable String symbol) {
+        return ResponseEntity.ok(graphService.getNeighbors(symbol));
     }
 
     @Operation(summary = "Retorna o menor caminho entre dois ativos (busca em largura)")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Resultado da busca de caminho retornado com sucesso"),
-            @ApiResponse(responseCode = "400", description = "Identificador de ativo em formato inválido (use TYPE:SYMBOL)"),
+            @ApiResponse(responseCode = "400", description = "Símbolo do ativo não informado"),
             @ApiResponse(responseCode = "401", description = "Token ausente ou inválido"),
             @ApiResponse(responseCode = "404", description = "Ativo não encontrado no grafo")
     })

@@ -25,7 +25,7 @@ public class FavoriteService {
         User user = getUser(userId);
         String symbol = request.symbol().trim().toUpperCase();
 
-        if (favoriteRepository.existsByUserIdAndTypeAndSymbol(userId, request.type(), symbol)) {
+        if (favoriteRepository.existsByUserIdAndSymbol(userId, symbol)) {
             throw new ConflictException("Ativo já está nos favoritos do usuário: " + symbol);
         }
 
@@ -36,7 +36,6 @@ public class FavoriteService {
         Favorite favorite = Favorite.builder()
                 .user(user)
                 .symbol(symbol)
-                .type(request.type())
                 .name(name)
                 .build();
 

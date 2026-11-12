@@ -15,7 +15,6 @@ import java.util.Queue;
 import java.util.Set;
 import jairo.investviewapi.dto.GraphEdge;
 import jairo.investviewapi.dto.GraphNode;
-import jairo.investviewapi.entity.AssetType;
 
 public class AdjacencyListGraph implements Graph {
 
@@ -24,13 +23,13 @@ public class AdjacencyListGraph implements Graph {
     private final Map<EdgeKey, Integer> weights = new LinkedHashMap<>();
 
     @Override
-    public void addNode(String id, String symbol, AssetType type, String name) {
+    public void addNode(String id, String symbol, String name) {
         GraphNode existing = nodesById.get(id);
         if (existing == null) {
-            nodesById.put(id, new GraphNode(id, symbol, type, name));
+            nodesById.put(id, new GraphNode(id, symbol, name));
             adjacency.computeIfAbsent(id, key -> new LinkedHashSet<>());
         } else if (existing.name() == null && name != null) {
-            nodesById.put(id, new GraphNode(id, existing.symbol(), existing.type(), name));
+            nodesById.put(id, new GraphNode(id, existing.symbol(), name));
         }
     }
 

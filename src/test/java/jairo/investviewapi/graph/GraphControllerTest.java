@@ -6,7 +6,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import jairo.investviewapi.entity.AssetType;
 import jairo.investviewapi.entity.Favorite;
 import jairo.investviewapi.entity.Role;
 import jairo.investviewapi.entity.User;
@@ -63,39 +62,39 @@ class GraphControllerTest {
     void shouldBuildGraphWithNodesAndWeightedEdges() throws Exception {
         User first = newUser("first");
         User second = newUser("second");
-        favorite(first, AssetType.STOCK, "PETR4", "Petrobras");
-        favorite(first, AssetType.STOCK, "VALE3", "Vale");
-        favorite(first, AssetType.CRYPTO, "BTC", "Bitcoin");
-        favorite(second, AssetType.STOCK, "PETR4", null);
-        favorite(second, AssetType.STOCK, "VALE3", null);
+        favorite(first, "PETR4", "Petrobras");
+        favorite(first, "VALE3", "Vale");
+        favorite(first, "BTC", "Bitcoin");
+        favorite(second, "PETR4", null);
+        favorite(second, "VALE3", null);
 
         mockMvc.perform(get("/graph").with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nodes.length()").value(3))
-                .andExpect(jsonPath("$.nodes[?(@.id == 'STOCK:PETR4')].name").value(hasItem("Petrobras")))
-                .andExpect(jsonPath("$.nodes[?(@.id == 'STOCK:VALE3')].name").value(hasItem("Vale")))
-                .andExpect(jsonPath("$.nodes[?(@.id == 'CRYPTO:BTC')].name").value(hasItem("Bitcoin")))
+                .andExpect(jsonPath("$.nodes[?(@.id == 'PETR4')].name").value(hasItem("Petrobras")))
+                .andExpect(jsonPath("$.nodes[?(@.id == 'VALE3')].name").value(hasItem("Vale")))
+                .andExpect(jsonPath("$.nodes[?(@.id == 'BTC')].name").value(hasItem("Bitcoin")))
                 .andExpect(jsonPath("$.edges.length()").value(3))
-                .andExpect(jsonPath("$.edges[?(@.source == 'STOCK:PETR4' && @.target == 'STOCK:VALE3')].weight")
+                .andExpect(jsonPath("$.edges[?(@.source == 'PETR4' && @.target == 'VALE3')].weight")
                         .value(hasItem(2)))
-                .andExpect(jsonPath("$.edges[?(@.source == 'CRYPTO:BTC' && @.target == 'STOCK:PETR4')].weight")
+                .andExpect(jsonPath("$.edges[?(@.source == 'BTC' && @.target == 'PETR4')].weight")
                         .value(hasItem(1)))
-                .andExpect(jsonPath("$.edges[?(@.source == 'CRYPTO:BTC' && @.target == 'STOCK:VALE3')].weight")
+                .andExpect(jsonPath("$.edges[?(@.source == 'BTC' && @.target == 'VALE3')].weight")
                         .value(hasItem(1)));
     }
 
     @Test
     void shouldReturnIsolatedAssetAsNodeWithoutEdges() throws Exception {
         User first = newUser("first");
-        favorite(first, AssetType.STOCK, "PETR4", "Petrobras");
+        favorite(first, "PETR4", "Petrobras");
 
         mockMvc.perform(get("/graph").with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nodes.length()").value(1))
-                .andExpect(jsonPath("$.nodes[0].id").value("STOCK:PETR4"))
+                .andExpect(jsonPath("$.nodes[0].id").value("PETR4"))
                 .andExpect(jsonPath("$.edges").isEmpty());
 
-        mockMvc.perform(get("/graph/assets/STOCK/PETR4/neighbors").with(jwtFor(requester)))
+        mockMvc.perform(get("/graph/assets/PETR4/neighbors").with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isEmpty());
     }
@@ -105,22 +104,22 @@ class GraphControllerTest {
         User first = newUser("first");
         User second = newUser("second");
         User third = newUser("third");
-        favorite(first, AssetType.STOCK, "VALE3", null);
-        favorite(first, AssetType.STOCK, "PETR4", null);
-        favorite(second, AssetType.STOCK, "VALE3", null);
-        favorite(second, AssetType.STOCK, "PETR4", null);
-        favorite(second, AssetType.CRYPTO, "BTC", null);
-        favorite(third, AssetType.STOCK, "VALE3", null);
-        favorite(third, AssetType.STOCK, "ITSA4", null);
+        favorite(first, "VALE3", null);
+        favorite(first, "PETR4", null);
+        favorite(second, "VALE3", null);
+        favorite(second, "PETR4", null);
+        favorite(second, "BTC", null);
+        favorite(third, "VALE3", null);
+        favorite(third, "ITSA4", null);
 
-        mockMvc.perform(get("/graph/assets/STOCK/VALE3/neighbors").with(jwtFor(requester)))
+        mockMvc.perform(get("/graph/assets/VALE3/neighbors").with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[0].id").value("STOCK:PETR4"))
+                .andExpect(jsonPath("$[0].id").value("PETR4"))
                 .andExpect(jsonPath("$[0].weight").value(2))
-                .andExpect(jsonPath("$[1].id").value("CRYPTO:BTC"))
+                .andExpect(jsonPath("$[1].id").value("BTC"))
                 .andExpect(jsonPath("$[1].weight").value(1))
-                .andExpect(jsonPath("$[2].id").value("STOCK:ITSA4"))
+                .andExpect(jsonPath("$[2].id").value("ITSA4"))
                 .andExpect(jsonPath("$[2].weight").value(1));
     }
 
@@ -128,21 +127,21 @@ class GraphControllerTest {
     void shouldReturnShortestPathBetweenAssets() throws Exception {
         User first = newUser("first");
         User second = newUser("second");
-        favorite(first, AssetType.STOCK, "PETR4", null);
-        favorite(first, AssetType.STOCK, "VALE3", null);
-        favorite(second, AssetType.STOCK, "VALE3", null);
-        favorite(second, AssetType.CRYPTO, "BTC", null);
+        favorite(first, "PETR4", null);
+        favorite(first, "VALE3", null);
+        favorite(second, "VALE3", null);
+        favorite(second, "BTC", null);
 
         mockMvc.perform(get("/graph/path")
-                        .queryParam("from", "STOCK:PETR4")
-                        .queryParam("to", "CRYPTO:BTC")
+                        .queryParam("from", "PETR4")
+                        .queryParam("to", "BTC")
                         .with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.found").value(true))
                 .andExpect(jsonPath("$.path.length()").value(3))
-                .andExpect(jsonPath("$.path[0]").value("STOCK:PETR4"))
-                .andExpect(jsonPath("$.path[1]").value("STOCK:VALE3"))
-                .andExpect(jsonPath("$.path[2]").value("CRYPTO:BTC"))
+                .andExpect(jsonPath("$.path[0]").value("PETR4"))
+                .andExpect(jsonPath("$.path[1]").value("VALE3"))
+                .andExpect(jsonPath("$.path[2]").value("BTC"))
                 .andExpect(jsonPath("$.length").value(2));
     }
 
@@ -150,13 +149,13 @@ class GraphControllerTest {
     void shouldReturnEmptyPathWhenAssetsAreDisconnected() throws Exception {
         User first = newUser("first");
         User second = newUser("second");
-        favorite(first, AssetType.STOCK, "PETR4", null);
-        favorite(first, AssetType.STOCK, "VALE3", null);
-        favorite(second, AssetType.CRYPTO, "BTC", null);
+        favorite(first, "PETR4", null);
+        favorite(first, "VALE3", null);
+        favorite(second, "BTC", null);
 
         mockMvc.perform(get("/graph/path")
-                        .queryParam("from", "STOCK:PETR4")
-                        .queryParam("to", "CRYPTO:BTC")
+                        .queryParam("from", "PETR4")
+                        .queryParam("to", "BTC")
                         .with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.found").value(false))
@@ -166,30 +165,21 @@ class GraphControllerTest {
 
     @Test
     void shouldReturnNotFoundWhenAssetIsNotInTheGraph() throws Exception {
-        mockMvc.perform(get("/graph/assets/STOCK/ITUB4/neighbors").with(jwtFor(requester)))
+        mockMvc.perform(get("/graph/assets/ITUB4/neighbors").with(jwtFor(requester)))
                 .andExpect(status().isNotFound());
 
         mockMvc.perform(get("/graph/path")
-                        .queryParam("from", "STOCK:PETR4")
-                        .queryParam("to", "CRYPTO:BTC")
+                        .queryParam("from", "PETR4")
+                        .queryParam("to", "BTC")
                         .with(jwtFor(requester)))
                 .andExpect(status().isNotFound());
     }
 
     @Test
-    void shouldReturnBadRequestWhenAssetTypeOrIdIsInvalid() throws Exception {
-        mockMvc.perform(get("/graph/assets/INVALID/PETR4/neighbors").with(jwtFor(requester)))
-                .andExpect(status().isBadRequest());
-
+    void shouldReturnBadRequestWhenAssetSymbolIsBlank() throws Exception {
         mockMvc.perform(get("/graph/path")
-                        .queryParam("from", "INVALID")
-                        .queryParam("to", "STOCK:PETR4")
-                        .with(jwtFor(requester)))
-                .andExpect(status().isBadRequest());
-
-        mockMvc.perform(get("/graph/path")
-                        .queryParam("from", "FOO:PETR4")
-                        .queryParam("to", "STOCK:PETR4")
+                        .queryParam("from", "")
+                        .queryParam("to", "PETR4")
                         .with(jwtFor(requester)))
                 .andExpect(status().isBadRequest());
     }
@@ -199,22 +189,22 @@ class GraphControllerTest {
         User first = newUser("first");
         User second = newUser("second");
         User third = newUser("third");
-        favorite(first, AssetType.STOCK, "PETR4", null);
-        favorite(first, AssetType.STOCK, "VALE3", null);
-        favorite(second, AssetType.CRYPTO, "BTC", null);
-        favorite(second, AssetType.CRYPTO, "ETH", null);
-        favorite(third, AssetType.STOCK, "ITSA4", null);
+        favorite(first, "PETR4", null);
+        favorite(first, "VALE3", null);
+        favorite(second, "BTC", null);
+        favorite(second, "ETH", null);
+        favorite(third, "ITSA4", null);
 
         mockMvc.perform(get("/graph/components").with(jwtFor(requester)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(3))
                 .andExpect(jsonPath("$[0].length()").value(2))
-                .andExpect(jsonPath("$[0][0]").value("CRYPTO:BTC"))
-                .andExpect(jsonPath("$[0][1]").value("CRYPTO:ETH"))
-                .andExpect(jsonPath("$[1][0]").value("STOCK:PETR4"))
-                .andExpect(jsonPath("$[1][1]").value("STOCK:VALE3"))
+                .andExpect(jsonPath("$[0][0]").value("BTC"))
+                .andExpect(jsonPath("$[0][1]").value("ETH"))
+                .andExpect(jsonPath("$[1][0]").value("PETR4"))
+                .andExpect(jsonPath("$[1][1]").value("VALE3"))
                 .andExpect(jsonPath("$[2].length()").value(1))
-                .andExpect(jsonPath("$[2][0]").value("STOCK:ITSA4"));
+                .andExpect(jsonPath("$[2][0]").value("ITSA4"));
     }
 
     @Test
@@ -231,10 +221,9 @@ class GraphControllerTest {
                 .build());
     }
 
-    private void favorite(User user, AssetType type, String symbol, String name) {
+    private void favorite(User user, String symbol, String name) {
         favoriteRepository.save(Favorite.builder()
                 .user(user)
-                .type(type)
                 .symbol(symbol)
                 .name(name)
                 .build());

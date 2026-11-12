@@ -38,6 +38,7 @@ public class DevSecurityConfig {
                                 "/h2-console/**")
                         .permitAll()
                         .requestMatchers("/users/*/favorites/**").hasAnyRole("USER", "ADMIN")
+                        .requestMatchers("/users/*/portfolio/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .formLogin(Customizer.withDefaults())

@@ -5,11 +5,10 @@ import java.util.Optional;
 import java.util.Set;
 import jairo.investviewapi.dto.GraphEdge;
 import jairo.investviewapi.dto.GraphNode;
-import jairo.investviewapi.entity.AssetType;
 
 public interface Graph {
 
-    void addNode(String id, String symbol, AssetType type, String name);
+    void addNode(String id, String symbol, String name);
 
     void addEdge(String source, String target);
 
