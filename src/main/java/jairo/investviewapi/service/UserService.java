@@ -1,5 +1,6 @@
 package jairo.investviewapi.service;
 
+import jairo.investviewapi.dto.PasswordResetRequest;
 import jairo.investviewapi.dto.UserCreateRequest;
 import jairo.investviewapi.dto.UserResponse;
 import jairo.investviewapi.dto.UserUpdateRequest;
@@ -7,7 +8,9 @@ import jairo.investviewapi.entity.User;
 import jairo.investviewapi.exception.ConflictException;
 import jairo.investviewapi.exception.ResourceNotFoundException;
 import jairo.investviewapi.repository.UserRepository;
+
 import java.util.List;
+
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -19,6 +22,8 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+
+    // O construtor é gerado automaticamente pelo Lombok (@RequiredArgsConstructor)
 
     @Transactional
     public UserResponse create(UserCreateRequest request) {
@@ -59,6 +64,15 @@ public class UserService {
     @Transactional
     public void delete(Long id) {
         userRepository.delete(getUser(id));
+    }
+
+    @Transactional
+    public void resetPassword(PasswordResetRequest request) {
+        var user = userRepository.findByEmail(request.email())
+                .orElseThrow(() -> new ResourceNotFoundException("Usuário não encontrado com o e-mail informado."));
+
+        user.setPassword(passwordEncoder.encode(request.newPassword()));
+        userRepository.save(user);
     }
 
     private User getUser(Long id) {
