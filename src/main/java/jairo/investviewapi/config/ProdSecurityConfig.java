@@ -31,6 +31,7 @@ public class ProdSecurityConfig {
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**")
                         .permitAll()
+                        .requestMatchers("/auth/login", "/auth/forgot-password").permitAll()
                         .requestMatchers("/users/*/favorites/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/*/portfolio/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/**").hasRole("ADMIN")

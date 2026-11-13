@@ -37,6 +37,7 @@ public class DevSecurityConfig {
                                 "/v3/api-docs/**",
                                 "/h2-console/**")
                         .permitAll()
+                        .requestMatchers("/auth/login", "/auth/forgot-password").permitAll()
                         .requestMatchers("/users/*/favorites/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/*/portfolio/**").hasAnyRole("USER", "ADMIN")
                         .requestMatchers("/users/**").hasRole("ADMIN")

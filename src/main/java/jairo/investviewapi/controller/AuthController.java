@@ -4,15 +4,18 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jairo.investviewapi.dto.LoginRequest;
 import jairo.investviewapi.dto.PasswordResetRequest;
+import jairo.investviewapi.dto.TokenResponse;
 import jairo.investviewapi.dto.UserResponse;
 import jairo.investviewapi.entity.User;
 import jairo.investviewapi.service.GoogleUserService;
+import jairo.investviewapi.service.TokenService;
 import jairo.investviewapi.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -26,14 +29,15 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final UserService userService;
     private final GoogleUserService googleUserService;
+    private final TokenService tokenService;
 
-    @Operation(summary = "Realiza o login com e-mail e senha tradicionais")
+    @Operation(summary = "Realiza o login com e-mail e senha tradicionais e retorna um JWT")
     @PostMapping("/login")
-    public ResponseEntity<String> login(@RequestBody @Valid LoginRequest request) {
-        authenticationManager.authenticate(
+    public ResponseEntity<TokenResponse> login(@RequestBody @Valid LoginRequest request) {
+        Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.email(), request.password())
         );
-        return ResponseEntity.ok("Login local efetuado com sucesso!");
+        return ResponseEntity.ok(tokenService.generate(authentication.getName()));
     }
 
     @Operation(summary = "Recupera/altera a senha informando o e-mail cadastrado")

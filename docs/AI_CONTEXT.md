@@ -5,8 +5,10 @@
 >
 > **Status: em desenvolvimento ativo (retomado em 2026-11-08).**
 > Autenticação Google OAuth2 Resource Server, tratamento de exceções, proteção
-> contra IDOR, controle de acesso RBAC (`ROLE_ADMIN` vs `ROLE_USER`) e grafo
-> global de ativos por coocorrência de favoritos implementados.
+> contra IDOR, controle de acesso RBAC (`ROLE_ADMIN` vs `ROLE_USER`), grafo
+> global de ativos por coocorrência de favoritos e carteira implementados.
+> Login local por e-mail/senha emitindo JWT próprio, funcionando e testado;
+> reset de senha ainda com pendência de segurança (token de reset).
 
 ## Resumo do projeto
 
@@ -57,7 +59,7 @@ URLs úteis:
 > arquivo `.env` (na raiz, ignorado pelo Git). As variáveis necessárias estão documentadas na tabela abaixo.
 > Não usar os valores de dev em produção.
 
-Variáveis esperadas (obrigatórias; sem defaults embutidos):
+Variáveis esperadas (algumas com default de dev/test; não usar defaults em produção):
 
 | Variável                | Uso                                              |
 | ----------------------- | ------------------------------------------------ |
@@ -76,6 +78,9 @@ Variáveis esperadas (obrigatórias; sem defaults embutidos):
 | `APP_OAUTH_GOOGLE_CLIENT_ID` | client ID do OAuth2/Google (audience do token)   |
 | `APP_OAUTH_GOOGLE_ISSUER`    | issuer do JWT (`https://accounts.google.com`)    |
 | `APP_OAUTH_GOOGLE_JWK_SET_URI` | JWK Set URI do Google (`https://www.googleapis.com/oauth2/v3/certs`) |
+| `APP_JWT_SECRET` | segredo HMAC do JWT local (obrigatório em `prod`) |
+| `APP_JWT_ISSUER` | issuer do JWT local (default `investview-api`) |
+| `APP_JWT_TTL` | TTL do JWT local (default `PT1H`) |
 | `APP_CORS_ALLOWED_ORIGINS` | origens permitidas no CORS (separadas por vírgula) |
 
 O Docker Compose carrega `.env` automaticamente. O Spring Boot lê o `.env` via
@@ -92,13 +97,16 @@ src/main/java/jairo/investviewapi/
 │   └── ProdSecurityConfig.java     -> chain prod (somente JWT resource server)
 ├── security/GoogleUserSyncFilter.java -> provisiona User (JIT) a partir do JWT do Google
 ├── security/CurrentUserProvider.java -> resolve o User do JWT e exige que seja o dono do recurso
+├── security/UserDetailsServiceImpl.java -> UserDetailsService que busca o User por email (login local)
 ├── controller/
-│   ├── AuthController.java         -> /auth/me (usuário autenticado via Google)
+│   ├── AuthController.java         -> /auth/me (Google), /auth/login (local) e /auth/forgot-password
 │   ├── UserController.java         -> CRUD REST de usuário (/users)
 │   ├── FavoriteController.java     -> favoritos por usuário (Swagger documentado)
 │   ├── PortfolioController.java    -> carteira do usuário (/users/{userId}/portfolio)
 │   └── GraphController.java        -> endpoints /graph (Swagger documentado)
 ├── dto/
+│   ├── LoginRequest.java           -> record de entrada do login local (email, password)
+│   ├── PasswordResetRequest.java   -> record de entrada do reset de senha (email, newPassword)
 │   ├── UserCreateRequest.java      -> record de entrada (create) + validação
 │   ├── UserUpdateRequest.java      -> record de entrada (update) + validação
 │   ├── UserResponse.java           -> record de saída (sem senha)
@@ -204,9 +212,26 @@ Pronto:
 - [x] Favoritos: `FavoriteController` usa `requireOwnerOrAdmin`, alinhando com as security chains (que permitem `USER` e `ADMIN` em `/users/*/favorites/**`). Dono acessa os próprios favoritos; `ADMIN` pode acessar/gerenciar favoritos de qualquer usuário.
 - [x] Grafo global de ativos por coocorrência de favoritos (Ideia 1): `GET /graph` (nós/arestas/pesos), `GET /graph/assets/{symbol}/neighbors` (peso desc), `GET /graph/path?from=SYMBOL&to=SYMBOL` (BFS) e `GET /graph/components` (componentes conexos). Pacote `graph` (`Graph`, `AdjacencyListGraph`, `GraphService`, `GraphController`) + projeção `FavoriteView` no `FavoriteRepository` (sem N+1). Sem mudança de schema e sem dependências novas. `GraphControllerTest` com 10 testes; suíte completa com 20 testes passando.
 - [x] Carteira do usuário (simulação): `Portfolio` 1:1 `User` (default "Minha carteira") e `PortfolioItem` (`symbol`, `name`, `quantity` `BigDecimal` 19,8) com unique `(portfolio_id, symbol)`. Endpoints `/users/{userId}/portfolio` (GET/PUT) e `/items` (GET/POST/PUT/DELETE). `POST /items` soma a quantidade quando a cota já existe; `PUT` define a quantidade absoluta. Rotas liberadas para `USER`/`ADMIN` via `requireOwnerOrAdmin`. Sem cálculo de valor/cotação no backend. `PortfolioControllerTest` com 12 testes; suíte completa com 33 testes passando.
+- [x] Login local por e-mail/senha (`POST /auth/login`) e recuperação/definição de senha (`POST /auth/forgot-password`): criados `LoginRequest`, `PasswordResetRequest`, `UserDetailsServiceImpl` (mapeia o `User` para `org.springframework.security.core.userdetails.User`, com `@Primary`), `UserService.resetPassword` e `AuthenticationManager` explícito em `SecurityConfig` (ver Decisões). `/auth/login` e `/auth/forgot-password` liberados nas chains dev/prod; `AuthenticationException` mapeada para 401. `LocalLoginTest` com 3 testes (login OK, senha errada 401, email inexistente 401); suíte completa com 36 testes passando.
+- [x] **Login local agora emite JWT próprio** (`TokenResponse` com `token`/`tokenType`/`expiresIn`): `TokenService` assina HMAC-SHA256 (`NimbusJwtEncoder`, segredo `app.jwt.secret`, TTL `app.jwt.ttl`, issuer `app.jwt.issuer`) com claims `email`, `email_verified`, `name` e `role` (sem `sub`, para o `GoogleUserSyncFilter` não gravar `googleSub`). O `JwtDecoder` roteia pelo `iss` (local vs Google) e o token local funciona como Bearer nas rotas protegidas. `LocalLoginTest` valida login + `/auth/me` + `/users/{id}/favorites` com o token; 36 testes passando.
+- [x] Corrigido o `StackOverflowError` no `/auth/login`: o bean `AuthenticationManager` usava `AuthenticationConfiguration.getAuthenticationManager()` e, como há dois `UserDetailsService` (`UserDetailsServiceImpl` + `InMemoryUserDetailsManager`), caía num bean lazy autorreferente. Agora o manager é um `ProviderManager` construído com um `DaoAuthenticationProvider` por `UserDetailsService` existente.
 
 Pendente:
 
+- [ ] **Segurança do `/auth/forgot-password`:** hoje é público e troca a senha apenas informando o e-mail (qualquer um redefine a senha de qualquer usuário). Exigir token de reset por e-mail ou autenticação.
+- [ ] **JWT local**: `APP_JWT_SECRET` é obrigatório em prod (sem default) e não há refresh token (TTL padrão de 1h); avaliar rotação de segredo e fluxo de refresh se necessário.
+- [ ] Testes de integração para `/auth/forgot-password`.
+- [ ] Avaliar/eliminar o aviso `Found 2 UserDetailsService beans ...` (inofensivo: o manager foi construído explicitamente, mas o auto-config do Spring Security avisa). Opções: remover o `InMemoryUserDetailsManager` de dev ou unificar a estratégia de usuários.
+- [ ] **`Dockerfile` com `SPRING_PROFILES_ACTIVE=test`** (H2 em memória, H2 console exposto, formLogin/httpBasic e admin in-memory) — revisar antes de deploy de produção.
+- [ ] **Swagger público em prod** (`/swagger-ui.html`, `/swagger-ui/**`, `/v3/api-docs/**` com `permitAll`); restringir ou desabilitar em produção.
+- [ ] **Redis sem uso**: dependência no `pom.xml` e `spring.data.redis.*` no properties não são utilizados; remover ou implementar o cache do grafo.
+- [ ] **`/auth/me` provisiona o usuário duas vezes** (o `GoogleUserSyncFilter` já provisiona antes); reaproveitar o atributo `currentUser` (hoje setado e nunca lido) ou remover a duplicação.
+- [ ] **Tratamento de erros**: `handleGeneric` não loga a exceção; 401/403 gerados pelo filter chain não seguem o contrato `ErrorResponse`.
+- [ ] **Normalização de e-mail** (trim/lowercase) em criação, login e provisionamento Google, para evitar contas duplicadas e falhas por caixa.
+- [ ] **CORS**: `APP_CORS_ALLOWED_ORIGINS` vazio bloqueia todas as origens; validar configuração por ambiente.
+- [ ] **Concorrência na carteira**: `getOrCreatePortfolio` e `addItem` fazem check-then-act (corrida pode gerar 409/500); considerar upsert/tratamento de conflito.
+- [ ] **Exclusão de usuário**: `User` não mapeia `Portfolio`; a remoção depende do cascade do banco (`@OnDelete`) — validar/testar exclusão de usuário com carteira.
+- [ ] Atualizar docs desatualizados: rota antiga do grafo (`/graph/assets/{type}/{symbol}/neighbors`), `README.md` e `ONBOARDING.md`.
 - [ ] Cache do grafo no Redis (hoje o grafo é recalculado em memória a cada request)
 - [ ] Entidade `Favorite` evoluir com campos de negócio (se necessário)
 - [ ] Migrations (Flyway/Liquibase) e remoção de `ddl-auto=update`
@@ -406,6 +431,33 @@ Pendente:
   grafo. Rotas do grafo simplificadas para `/graph/assets/{symbol}/neighbors` e
   `/graph/path?from=SYMBOL&to=SYMBOL`. Em bancos existentes, remover a coluna
   `type` manualmente (o `ddl-auto=update` não dropa colunas).
+- **Login local e reset de senha (2026-11-12):** `AuthController` passou a expor
+  `POST /auth/login` (valida credenciais via `AuthenticationManager` e emite um
+  JWT próprio) e `POST /auth/forgot-password` (chama `UserService.resetPassword`,
+  que busca por e-mail e regrava a senha com BCrypt, retornando 204). Criados
+  `LoginRequest`, `PasswordResetRequest` e `UserDetailsServiceImpl`. O
+  `UserDetailsServiceImpl` (`@Primary`) busca o `User` por e-mail e o mapeia para
+  `org.springframework.security.core.userdetails.User` (com `roles(role.name())`),
+  evitando acoplar a entidade ao Spring Security.
+  **Fix do `StackOverflowError` (2026-11-12):** o bean `AuthenticationManager` não
+  usa mais `AuthenticationConfiguration.getAuthenticationManager()`. Como existem
+  dois `UserDetailsService` (`UserDetailsServiceImpl` e o `InMemoryUserDetailsManager`
+  de dev), o auto-config não conseguia montar o manager e devolvia um bean lazy que
+  chamava a si mesmo em `authenticate` (recursão). O manager agora é um
+  `ProviderManager` montado no `SecurityConfig` com um `DaoAuthenticationProvider`
+  por `UserDetailsService` (`ObjectProvider<UserDetailsService>`), permitindo tanto
+  usuários do banco quanto o admin em memória de dev. `/auth/login` e
+  `/auth/forgot-password` foram liberados nas chains (`permitAll`) e
+  `AuthenticationException` passou a retornar 401 pelo `GlobalExceptionHandler`.
+  **JWT local (2026-11-12):** em vez de sessão/cookie, o login local emite um JWT
+  HMAC-SHA256 (`TokenService` + `NimbusJwtEncoder`), mantendo o padrão Bearer e o
+  prod stateless. O `JwtDecoder` inspeciona o `iss` e delega para o decoder local
+  ou o do Google. Claims: `email`, `email_verified`, `name` e `role`; sem `sub`
+  para não confundir o `GoogleUserSyncFilter` (que grava `googleSub`). Config:
+  `app.jwt.secret` (obrigatório em prod via `APP_JWT_SECRET`), `app.jwt.issuer` e
+  `app.jwt.ttl` (default `PT1H`). Pendente: `/auth/forgot-password` ainda permite
+  trocar a senha apenas com o e-mail (inseguro) e não há refresh token.
+  O fluxo de autenticação principal continua sendo Google OAuth2 (Bearer JWT).
 
 ## Observações do ambiente
 
@@ -437,6 +489,60 @@ Pendente:
 ## Histórico de conversas
 
 ### 2026-11-12
+- **`.env` local atualizado** (a pedido): adicionados `APP_JWT_SECRET` (gerado
+  aleatoriamente, 32 bytes em hex), `APP_JWT_ISSUER=investview-api` e
+  `APP_JWT_TTL=PT1H`. O `.env` continua ignorado pelo Git; valores não são
+  documentados.
+- **Login local com JWT próprio** (escolha do usuário; sessão descartada por exigir
+  cookies e prod stateful). Implementado: `TokenResponse`, `TokenService`
+  (HMAC-SHA256 com `NimbusJwtEncoder`, TTL `app.jwt.ttl`, issuer `app.jwt.issuer`),
+  `JwtEncoder` e `JwtDecoder` roteador por `iss` no `SecurityConfig` (local vs
+  Google), `/auth/login` retornando `{token, tokenType, expiresIn}` e propriedades
+  `app.jwt.*` (default de dev/test; `APP_JWT_SECRET` obrigatório em prod).
+  `LocalLoginTest` agora usa o token em `/auth/me` e `/users/{id}/favorites`.
+  Compilado e 36 testes passando via `mvnw.cmd test`.
+- **Revisão de erros/inconsistências** (sem alterar código). Achados principais:
+  (1) `/auth/login` só valida credenciais: não cria sessão nem emite token, e o
+  `CurrentUserProvider` só aceita JWT, então o login local não dá acesso às rotas
+  protegidas; (2) `/auth/forgot-password` é público, redefine a senha só com o
+  e-mail e revela existência da conta (404); (3) `Dockerfile` está com
+  `SPRING_PROFILES_ACTIVE=test` (H2 em memória, H2 console exposto, formLogin/
+  httpBasic e admin in-memory); (4) Swagger público em prod; (5) Redis no
+  `pom.xml`/properties sem uso; (6) `/auth/me` provisiona o usuário de novo (o
+  `GoogleUserSyncFilter` já provisionou) e o atributo `currentUser` nunca é lido;
+  (7) `GlobalExceptionHandler` genérico não loga a exceção; (8) 401/403 do filter
+  chain não seguem o contrato `ErrorResponse`; (9) e-mails sem normalização
+  (trim/lowercase); (10) CORS vazio bloqueia origens; (11) corridas em
+  `getOrCreatePortfolio`/`addItem`; (12) exclusão de usuário depende do cascade do
+  banco para `Portfolio`; (13) sem paginação; (14) rota do grafo e README/
+  ONBOARDING desatualizados.
+- **Fix do `StackOverflowError` no `/auth/login`** (relatado pelo usuário):
+  causa era o bean `AuthenticationManager` via
+  `AuthenticationConfiguration.getAuthenticationManager()` com dois
+  `UserDetailsService` (banco + admin em memória), gerando bean lazy
+  autorreferente (`JdkDynamicAopProxy` recursando em `authenticate`).
+  Correções: (1) `SecurityConfig` agora cria `ProviderManager` explícito com um
+  `DaoAuthenticationProvider` por `UserDetailsService`; (2)
+  `UserDetailsServiceImpl` mapeia a entidade para
+  `org.springframework.security.core.userdetails.User` e foi marcado `@Primary`;
+  (3) `/auth/login` e `/auth/forgot-password` liberados nas chains dev/prod; (4)
+  `GlobalExceptionHandler` mapeia `AuthenticationException` para 401; (5) novo
+  `LocalLoginTest` (3 testes). Compilado e suíte completa com **36 testes**
+  passando via `mvnw.cmd test`. Aviso residual (inofensivo) do Spring Security
+  sobre 2 `UserDetailsService` registrado como pendência.
+- Releitura completa do `docs/AI_CONTEXT.md` e do projeto a pedido do usuário
+  (pom, properties test/prod, segurança, entidades, DTOs, repositórios, services,
+  controllers, pacote `graph` e todos os testes). Contexto atualizado para refletir
+  o **login local** (`POST /auth/login`, `POST /auth/forgot-password`,
+  `LoginRequest`, `PasswordResetRequest`, `UserDetailsServiceImpl`,
+  `AuthenticationManager` e `UserService.resetPassword`), que não constava aqui.
+  Achados registrados como pendência: (1) `UserDetailsServiceImpl` faz cast de
+  `User` para `UserDetails` sem `User` implementar a interface (ClassCastException);
+  (2) dois `UserDetailsService` no profile `!prod` (`UserDetailsServiceImpl` +
+  `InMemoryUserDetailsManager`) tornam o `AuthenticationManager` ambíguo;
+  (3) `/auth/forgot-password` é público e troca a senha só pelo e-mail;
+  (4) `/auth/login` não emite token. Nenhuma alteração de código feita;
+  suíte segue em 33 testes (login local sem testes). `git status` limpo em `main`.
 - Releitura do projeto e do contexto de IA (pom, properties test/prod, Docker,
   segurança dev/prod, entidades, DTOs, repositórios, services, controllers,
   pacote `graph` e testes). Confirmado: 21 `@Test`; arquitetura em camadas e
@@ -823,8 +929,16 @@ Pendente:
    (`/graph/**`) como candidato ao cache, já que hoje é recalculado a cada request.
 8. ~~Implementar o grafo global de ativos por coocorrência de favoritos (Ideia 1),
     conforme `docs/GRAPH_PROMPT.md` (endpoints `/graph`, BFS, componentes e testes).~~
-    **Concluído em 2026-11-09:** endpoints `/graph`, `/graph/assets/{type}/{symbol}/neighbors`,
+    **Concluído em 2026-11-09:** endpoints `/graph`, `/graph/assets/{symbol}/neighbors`,
     `/graph/path` e `/graph/components` implementados e testados (20 testes passando).
 9. Consumir a carteira no front de testes: seção adicionada ao
    `docs/FRONT_TEST_PROMPT.md` e prompt curto em
    `docs/FRONT_TEST_CARTEIRA_PROMPT.md` (2026-11-12).
+10. Login local: **feito** o fix do `StackOverflowError`, o mapeamento
+    `User` → `UserDetails`, o `AuthenticationManager` explícito, o `permitAll` das
+    rotas, os testes de `/auth/login` e a **emissão de JWT próprio** (Bearer,
+    HMAC-SHA256, roteamento por `iss`) — 36 testes passando em 2026-11-12. Resta:
+    proteger o `/auth/forgot-password` (token de reset), testar o forgot-password,
+    definir refresh token/rotação de `APP_JWT_SECRET` se necessário e, se desejado,
+    remover o `InMemoryUserDetailsManager` de dev para eliminar o aviso de 2
+    `UserDetailsService`.

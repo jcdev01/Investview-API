@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -42,6 +43,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             AccessDeniedException ex,
             HttpServletRequest request) {
         return build(HttpStatus.FORBIDDEN, ex.getMessage(), request.getRequestURI());
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<Object> handleAuthentication(
+            AuthenticationException ex,
+            HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), request.getRequestURI());
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

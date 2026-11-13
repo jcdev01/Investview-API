@@ -1,11 +1,14 @@
 package jairo.investviewapi.security;
 
+import jairo.investviewapi.entity.User;
 import jairo.investviewapi.repository.UserRepository;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.context.annotation.Primary;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
+@Primary
 @Service
 public class UserDetailsServiceImpl implements UserDetailsService {
     private final UserRepository userRepository;
@@ -16,7 +19,14 @@ public class UserDetailsServiceImpl implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        return (UserDetails) userRepository.findByEmail(email).orElseThrow(() -> new UsernameNotFoundException("Usu" +
-                "ário não encontrado com o e-mail: " + email));
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException(
+                        "Usuário não encontrado com o e-mail: " + email));
+
+        return org.springframework.security.core.userdetails.User.builder()
+                .username(user.getEmail())
+                .password(user.getPassword() != null ? user.getPassword() : "")
+                .roles(user.getRole().name())
+                .build();
     }
 }
